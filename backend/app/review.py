@@ -82,7 +82,12 @@ def queue_items(store: Store, limit: int = 200, project_id: str | None = None) -
             if question.status == "approved":
                 continue
             levels = {i.level for i in question.issues}
-            level = "error" if "error" in levels else "warning" if levels else "pending"
+            if "error" in levels:
+                level = "error"
+            elif levels or question.flags:
+                level = "warning"
+            else:
+                level = "pending"
             items.append(
                 {
                     "project_id": project.id,

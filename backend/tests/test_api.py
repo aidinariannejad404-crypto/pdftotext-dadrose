@@ -285,3 +285,41 @@ def test_batch_reports_bad_files_without_failing(client):
     body = response.json()
     assert len(body["projects"]) == 1 and body["errors"][0]["filename"] == "bad.pdf"
     _wait_ready(client, body["projects"][0]["id"])
+
+
+def test_batch_titles_zip_export_and_dismissed_duplicates(client):
+    import zipfile
+
+    pdf = fixtures_gen.booklet_pdf()
+    body = client.post(
+        "/api/projects/batch",
+        files=[
+            ("files", ("x.pdf", pdf, "application/pdf")),
+            ("files", ("y.pdf", pdf, "application/pdf")),
+        ],
+        data={"engine": "offline", "doc_type": "questions", "titles": ["دفترچه الف", ""]},
+    ).json()
+    assert [p["title"] for p in body["projects"]] == ["دفترچه الف", "y"]
+    first, second = (_wait_ready(client, p["id"]) for p in body["projects"])
+    summary = next(s for s in client.get("/api/projects").json() if s["id"] == first["id"])
+    assert summary["stats"]["pages"] == 1
+
+    # duplicates: the second copy sees the first; «تکراری نیست» clears and persists
+    dup = next((q for q in second["questions"] if q["duplicates"]), None)
+    if dup is not None:
+        cleared = client.put(
+            f"/api/projects/{second['id']}/questions/{dup['number']}", json={"duplicates": []}
+        ).json()
+        assert cleared["duplicates"] == [] and "duplicate" not in {
+            i["code"] for i in cleared["issues"]
+        }
+
+    # zip: approved only → nothing yet; all → one docx per project
+    ids = f"{first['id']},{second['id']}"
+    assert client.get(f"/api/export.zip?project_ids={ids}").status_code == 400
+    response = client.get(f"/api/export.zip?project_ids={ids}&only_approved=false")
+    assert response.headers["content-type"] == "application/zip"
+    names = zipfile.ZipFile(io.BytesIO(response.content)).namelist()
+    assert sorted(names) == ["dafterche.docx"] or sorted(names) == sorted(
+        ["دفترچه الف.docx", "y.docx"]
+    )

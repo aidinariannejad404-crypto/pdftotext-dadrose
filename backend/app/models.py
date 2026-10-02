@@ -221,6 +221,7 @@ class ProjectSummary(BaseModel):
     queue_position: int | None = None  # 1-based position while queued
     auto_approved_count: int = 0
     duplicate_count: int = 0
+    stats: ProjectStats = Field(default_factory=ProjectStats)
     question_count: int
     approved_count: int
     error_count: int
@@ -235,6 +236,7 @@ class QuestionUpdate(BaseModel):
     source_ref: str | None = None
     topic: str | None = None
     articles: list[ArticleRef] | None = None
+    duplicates: list[DuplicateRef] | None = None  # [] = admin confirmed «تکراری نیست»
     status: Literal["pending", "approved"] | None = None
     # the remaining flags after the admin accepted a word or swapped in the alternative reading
     flags: list[Flag] | None = None

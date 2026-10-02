@@ -148,3 +148,35 @@ test('classification extras (desktop): article editor, group by article, stats',
   await page.getByTestId('menu-stats').click();
   await page.screenshot({ path: `${OUT}/review-desktop-stats.png` });
 });
+
+for (const [name, viewport] of [
+  ['desktop', { width: 1440, height: 900 }],
+  ['mobile', { width: 390, height: 844 }],
+] as const) {
+  test(`review queue page (${name})`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await reset(page);
+    await page.goto('/#/queue');
+    await page.getByTestId('queue-item').first().waitFor();
+    await page.evaluate(() => document.fonts.ready);
+    await page.screenshot({ path: `${OUT}/queue-${name}.png` });
+  });
+}
+
+test('high-volume extras (desktop): bulk bar, keys dialog, duplicates', async ({ page }) => {
+  await reset(page);
+  await page.goto('/#/');
+  await page.locator('[data-batch="batch-1"]').getByRole('checkbox').first().check();
+  await page.getByTestId('bulk-bar').waitFor();
+  await page.evaluate(() => document.fonts.ready);
+  await page.locator('[data-testid="bulk-bar"]').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${OUT}/projects-desktop-batch.png`, fullPage: true });
+  await page.goto('/#/p/demo?q=11');
+  await page.getByTestId('dup-box').waitFor();
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: `${OUT}/review-desktop-duplicate.png` });
+  await page.getByTestId('more-menu').click();
+  await page.getByTestId('menu-keys').click();
+  await page.getByTestId('keys-input').fill('4123 2-42 1324 3');
+  await page.screenshot({ path: `${OUT}/review-desktop-keys.png` });
+});

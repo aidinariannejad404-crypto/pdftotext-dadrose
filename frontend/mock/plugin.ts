@@ -48,7 +48,7 @@ function seed() {
     },
     withDemoExtras(makeReadyProject('demo', 'آزمون کانون وکلا ۱۴۰۳', new Date(now - 3600_000).toISOString())),
     {
-      ...makeReadyProject('b-1', 'کتاب تست تجارت - فصل ۱', new Date(now - 1800_000).toISOString()),
+      ...pendingAll(makeReadyProject('b-1', 'کتاب تست تجارت - فصل ۱', new Date(now - 1800_000).toISOString())),
       track: 'other', year: null, batch_id: 'batch-1',
     },
     {
@@ -71,6 +71,14 @@ function seed() {
   ];
 }
 seed();
+
+function pendingAll<T extends Project>(p: T): T {
+  p.questions.forEach((q) => {
+    q.status = 'pending';
+    q.approved_by = null;
+  });
+  return p;
+}
 
 function withDemoExtras(p: MockProject): MockProject {
   const q1 = p.questions.find((q) => q.number === 1);
@@ -128,6 +136,7 @@ function advance(p: MockProject) {
     }
     if (p._subject) ready.questions.forEach((q) => (q.subject_key = p._subject!));
     const wantAuto = p.auto_approve;
+    pendingAll(ready);
     Object.assign(p, {
       ...ready, auto_approve: wantAuto, batch_id: p.batch_id, track: p.track, year: p.year, blueprint: p.blueprint, engine: p.engine,
       documents: p.doc_type === 'text' ? ready.documents : p.documents,

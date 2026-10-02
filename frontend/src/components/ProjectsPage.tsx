@@ -73,7 +73,7 @@ function ProjectRow({
           <span>{TRACK_LABELS[p.track] ?? p.track}</span>
           {p.year && <span>{fa(p.year)}</span>}
           <span>{formatDate(p.created_at)}</span>
-          {p.stats && statsText(p.stats) && <span data-testid="project-stats">{statsText(p.stats)}</span>}
+          {p.status === 'ready' && p.stats && statsText(p.stats) && <span data-testid="project-stats">{statsText(p.stats)}</span>}
         </div>
       </div>
       <div className="project-status">

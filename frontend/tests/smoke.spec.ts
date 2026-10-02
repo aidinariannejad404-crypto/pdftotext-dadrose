@@ -8,7 +8,7 @@ test('projects page lists projects and opens review', async ({ page }) => {
   await page.goto('/#/');
   await expect(page.getByRole('heading', { name: 'پروژه‌ها' })).toBeVisible();
   const rows = page.getByTestId('project-row');
-  await expect(rows).toHaveCount(4);
+  await expect(rows).toHaveCount(7);
   await expect(page.getByText('آماده‌ی بازبینی').first()).toBeVisible();
   await page.getByRole('link', { name: 'آزمون کانون وکلا ۱۴۰۳' }).click();
   await expect(page).toHaveURL(/#\/p\/demo/);
@@ -446,4 +446,115 @@ test('direct push: connection test and site job status', async ({ page }) => {
   await expect(page.getByTestId('push-result')).toContainText('در حال پردازش در سایت… (در صف)');
   await expect(page.getByTestId('push-result')).toContainText('(در حال پردازش)', { timeout: 8_000 });
   await expect(page.getByTestId('push-result')).toContainText('آماده‌ی بازبینی در پنل سایت ✓ (نیازمند بازبینی)', { timeout: 12_000 });
+});
+
+test('batch upload: each file its own project, auto-approve on, stays on list with the batch highlighted', async ({ page }) => {
+  await page.goto('/#/');
+  await page.getByTestId('doc-type-testbook').click();
+  await page.getByTestId('mode-batch').click();
+  await page.locator('#drop-booklet-input').setInputFiles([
+    { name: 'tejarat-1.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4') },
+    { name: 'tejarat-2.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4') },
+    { name: 'IMG_7.jpg', mimeType: 'image/jpeg', buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
+  ]);
+  const titles = page.getByTestId('batch-title');
+  await expect(titles).toHaveCount(3);
+  await expect(titles.nth(0)).toHaveValue('tejarat-1');
+  await titles.nth(2).fill('عکس فصل سوم');
+  await expect(page.getByTestId('auto-approve')).toBeChecked();
+  await expect(page.getByTestId('title-input')).toHaveCount(0);
+  await page.getByTestId('submit-upload').click();
+  await expect(page.getByText(/۳ پروژه ساخته شد/)).toBeVisible();
+  await expect(page).toHaveURL(/#\/$/);
+  await expect(page.locator('.batch-group.is-highlight')).toBeVisible();
+  const group = page.getByTestId('batch-group').filter({ hasText: 'عکس فصل سوم' });
+  await expect(group.getByTestId('project-row')).toHaveCount(3);
+  await expect(group).toContainText('عکس فصل سوم');
+  // the first one finishes and gets clean questions auto-approved
+  await expect(group.getByTestId('project-row').first()).toContainText('خودکار تأییدشده', { timeout: 20_000 });
+});
+
+test('projects list: batch groups, queue positions, stats, bulk auto-approve', async ({ page }) => {
+  await page.goto('/#/');
+  const group = page.locator('[data-batch="batch-1"]');
+  await expect(group.getByTestId('batch-head')).toContainText('گروه ۳ فایل');
+  await expect(group.getByTestId('batch-head')).toContainText('۱ آماده · ۲ در صف');
+  await expect(group.getByTestId('queue-position').first()).toHaveText('در صف: نفر ۱');
+  await expect(page.getByTestId('queue-summary')).toContainText('در صف: ۲');
+  await expect(page.getByTestId('project-stats').first()).toContainText('Claude+Tesseract');
+  await group.getByTestId('batch-head').click(); // collapse
+  await expect(group.getByTestId('project-row')).toHaveCount(0);
+  await group.getByTestId('batch-head').click();
+  await group.getByRole('checkbox', { name: 'انتخاب کتاب تست تجارت - فصل ۱' }).check();
+  await expect(page.getByTestId('bulk-bar')).toContainText('۱ پروژه انتخاب شد');
+  await expect(page.getByTestId('bulk-push')).toHaveCount(0); // push not configured
+  await page.getByTestId('bulk-auto').click();
+  await expect(page.getByText(/۲ سؤال سالم در ۱ پروژه خودکار تأیید شد/)).toBeVisible();
+});
+
+test('review queue: cross-project stream, filter, open with from=queue and advance', async ({ page }) => {
+  await page.goto('/#/');
+  await page.getByTestId('nav-queue').click();
+  await expect(page).toHaveURL(/#\/queue/);
+  const items = page.getByTestId('queue-item');
+  await expect(items.first()).toContainText('خطا');
+  await page.getByTestId('queue-level-error').click();
+  const nErr = await items.count();
+  expect(nErr).toBeGreaterThan(0);
+  for (let i = 0; i < nErr; i++) await expect(items.nth(i)).toContainText('خطا');
+  await page.getByTestId('queue-level-all').click();
+  await items.first().click();
+  await expect(page).toHaveURL(/from=queue/);
+  await expect(page.getByTestId('queue-nav')).toBeVisible();
+  const first = await page.getByTestId('current-number').textContent();
+  await page.getByTestId('queue-next').click();
+  await expect(page.getByTestId('current-number')).not.toHaveText(first ?? '');
+  await expect(page).toHaveURL(/from=queue/);
+  // approving moves along the queue too
+  const before = page.url();
+  await page.getByTestId('approve').click();
+  await expect.poll(() => page.url()).not.toBe(before);
+  await expect(page).toHaveURL(/from=queue/);
+});
+
+test('review: approve all clean questions, auto badge, stats line', async ({ page }) => {
+  await page.goto('/#/p/b-1?q=2');
+  await expect(page.locator('.review-stats')).toContainText('۳ صفحه · ۲ دقیقه · Claude+Tesseract');
+  await expect(page.getByTestId('approve-clean')).toContainText('۲ سؤال');
+  await page.getByTestId('approve-clean').click();
+  await page.getByTestId('confirm-auto-approve').click();
+  await expect(page.getByText('۲ سؤال سالم خودکار تأیید شد.')).toBeVisible();
+  await expect(page.getByTestId('count-approved')).toHaveText('۲');
+  await expect(page.getByTestId('qchip-1')).toHaveClass(/is-auto/);
+  await page.getByTestId('qchip-1').click();
+  await expect(page.getByTestId('approved-chip')).toContainText('خودکار');
+  await expect(page.getByTestId('approve-clean')).toHaveCount(0);
+});
+
+test('quick key entry: preview with changes, then save', async ({ page }) => {
+  await page.goto('/#/p/demo?q=4');
+  await page.getByTestId('more-menu').click();
+  await page.getByTestId('menu-keys').click();
+  await page.getByTestId('keys-input').fill('۲ ۱');
+  // start at 1: «2», skip, «1» → q1 (4→2) and q3 (2→1) change
+  await expect(page.getByTestId('keys-grid').locator('.keys-change')).toHaveCount(2);
+  await expect(page.getByTestId('keys-grid').locator('.keys-skip')).toHaveCount(1);
+  await page.getByTestId('keys-start').fill('4');
+  await page.getByTestId('keys-input').fill('2');
+  await expect(page.getByTestId('keys-grid').locator('.keys-new')).toHaveCount(1);
+  await page.getByTestId('keys-save').click();
+  await expect(page.getByText('کلید ۱ سؤال ثبت شد.')).toBeVisible();
+  await expect(page.getByTestId('option-2').getByRole('radio')).toBeChecked();
+  const p = await (await page.request.get('/api/projects/demo')).json();
+  expect(p.questions.find((q: { number: number }) => q.number === 4)).toMatchObject({ correct_key: '2', key_source: 'manual' });
+});
+
+test('duplicates: box with link to the other project, dismiss locally', async ({ page }) => {
+  await page.goto('/#/p/demo?q=11');
+  const box = page.getByTestId('dup-box');
+  await expect(box).toContainText('کتاب تست تجارت - فصل ۱');
+  await expect(box).toContainText('۹۷٪');
+  await expect(page.getByTestId('dup-link')).toHaveAttribute('href', '#/p/b-1?q=11');
+  await page.getByTestId('dup-dismiss').click();
+  await expect(box).toHaveCount(0);
 });

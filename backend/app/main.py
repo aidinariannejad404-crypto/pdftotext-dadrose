@@ -118,6 +118,7 @@ def _summary(project: Project) -> ProjectSummary:
         queue_position=jobs.queue_position(project.id) if project.status == "queued" else None,
         auto_approved_count=sum(q.approved_by == "auto" for q in project.questions),
         duplicate_count=sum(bool(q.duplicates) for q in project.questions),
+        stats=project.stats,
     )
 
 
@@ -271,6 +272,7 @@ MAX_BATCH_FILES = 100
 @app.post("/api/projects/batch")
 async def create_batch(
     files: Annotated[list[UploadFile], File()],
+    titles: Annotated[list[str] | None, Form()] = None,
     track: Annotated[Literal["bar", "center", "other"], Form()] = "other",
     year: Annotated[int | None, Form()] = None,
     blueprint: Annotated[str, Form()] = "auto",
@@ -280,10 +282,11 @@ async def create_batch(
     auto_approve: Annotated[bool, Form()] = False,
 ):
     """Many files at once: every file becomes its own project, queued in upload order."""
-    files = [f for f in files if f.filename]
-    if not files:
+    named = [(f, (titles or [])[i] if i < len(titles or []) else "") for i, f in enumerate(files)]
+    named = [(f, t) for f, t in named if f.filename]
+    if not named:
         raise HTTPException(400, "هیچ فایلی انتخاب نشده است.")
-    if len(files) > MAX_BATCH_FILES:
+    if len(named) > MAX_BATCH_FILES:
         raise HTTPException(400, f"حداکثر {MAX_BATCH_FILES} فایل در هر بارگذاری گروهی.")
     options = UploadOptions(
         track=track,
@@ -297,14 +300,53 @@ async def create_batch(
     _validate_options(options)
     batch_id = uuid.uuid4().hex[:8]
     projects, errors = [], []
-    for upload in files:
+    for upload, title in named:
         try:
-            projects.append(await _create([("booklet", [upload])], "", options, batch_id))
+            projects.append(await _create([("booklet", [upload])], title, options, batch_id))
         except HTTPException as exc:  # one bad file must not sink the whole batch
             errors.append({"filename": upload.filename, "detail": exc.detail})
     if not projects:
         raise HTTPException(400, errors[0]["detail"] if errors else "بارگذاری ناموفق بود.")
     return {"batch_id": batch_id, "projects": projects, "errors": errors}
+
+
+@app.get("/api/export.zip")
+def export_zip(project_ids: str, only_approved: bool = True):
+    """One ZIP with a Word file per project (question or full-text mode)."""
+    import io
+    import re
+    import zipfile
+
+    from .export_docx import text_to_docx, to_docx
+
+    buffer = io.BytesIO()
+    used: set[str] = set()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for project_id in [p for p in project_ids.split(",") if p]:
+            project = _load(project_id)
+            if project.status != "ready":
+                continue
+            if project.mode == "text":
+                data = text_to_docx(project.title, _full_text(project, only_approved))
+            else:
+                if only_approved and not any(q.status == "approved" for q in project.questions):
+                    continue
+                data = to_docx(project, only_approved)
+            stem = re.sub(r'[\\/:*?"<>|]+', "_", project.title).strip() or project.id
+            name, n = f"{stem}.docx", 2
+            while name in used:
+                name, n = f"{stem} ({n}).docx", n + 1
+            used.add(name)
+            archive.writestr(name, data)
+    if not used:
+        raise HTTPException(
+            400, "فایلی برای دانلود وجود ندارد (پروژه‌ی آماده یا سؤال تأییدشده‌ای نیست)."
+        )
+    return Response(
+        buffer.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="dadrose-export.zip"'},
+    )
 
 
 @app.get("/api/queue")

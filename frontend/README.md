@@ -39,6 +39,13 @@ Playwright uses the pre-installed Chromium (`PLAYWRIGHT_BROWSERS_PATH`); `@playw
 - «بیشتر» → «طبقه‌بندی خودکار سؤال‌ها» (`POST /classify`), «آمار», «ارسال مستقیم به سایت» (push + «تست اتصال» via `/api/site/check`, then polls `/api/site/import-jobs/{id}` every 3 s). Push is disabled unless `health.push_configured`; hidden in text mode.
 - Mock: `POST /api/__mock/push-config {on}` enables push for testing.
 
+## High volume
+
+- Upload «بارگذاری گروهی: هر فایل یک پروژه‌ی جدا» → `POST /api/projects/batch` (`files` + `titles` repeated, common fields, `auto_approve`); stays on the list and highlights the batch. «تأیید خودکار سؤال‌های سالم» sends `auto_approve`.
+- Projects list grouped by `batch_id` (collapsible), queue position chips, «خودکار تأییدشده» / «تکراری» counts, `stats` line; bulk bar: «تأیید خودکار سالم‌ها» (`POST /auto-approve` per project), «دانلود Word همه», «ارسال تأییدشده‌ها به سایت» (`POST /api/push-approved`).
+- «صف بازبینی» (`#/queue`, `GET /api/review-queue`): opens questions with `&from=queue`; «تأیید و بعدی» / «بعدی در صف» continue across projects.
+- Review: «تأیید همه‌ی سالم‌ها», «خودکار» badges, duplicates box, «ورود سریع کلید» (`PUT /keys`, preview grid).
+
 ## Real end-to-end test (against the actual backend)
 
 `tests-real/real.spec.ts` drives the real FastAPI backend (which serves `frontend/dist`). Its inputs are generated at runtime by `backend/tests/fixtures_gen.py` (typed booklet PDF + phone-scan photo), so no private files are needed.
