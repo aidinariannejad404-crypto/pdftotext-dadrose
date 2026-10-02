@@ -6,16 +6,29 @@ import { Icon } from './Icons';
 import Modal from './Modal';
 import { errorMessage, useToast } from './Toasts';
 
-const RUNNING = /pend|queue|process|run|pars|upload|start/i;
-const READY = /ready|review|done|complet|success|parsed|finish|preview/i;
-const FAILED = /fail|error|cancel|reject/i;
+// Site ImportJob.status values (exact).
+type Phase = 'running' | 'review' | 'imported' | 'failed' | 'unknown';
+const PHASES: Record<string, Phase> = {
+  queued: 'running',
+  parsing: 'running',
+  needs_review: 'review',
+  ready: 'review',
+  imported: 'imported',
+  failed: 'failed',
+  rolled_back: 'failed',
+};
+const STATUS_FA: Record<string, string> = {
+  queued: 'در صف',
+  parsing: 'در حال پردازش',
+  needs_review: 'نیازمند بازبینی',
+  ready: 'آماده ثبت',
+  imported: 'ثبت‌شده',
+  failed: 'ناموفق',
+  rolled_back: 'بازگردانده‌شده',
+};
 
-function jobPhase(status: string | undefined): 'running' | 'ready' | 'failed' | 'unknown' {
-  if (!status) return 'unknown';
-  if (FAILED.test(status)) return 'failed';
-  if (READY.test(status)) return 'ready';
-  if (RUNNING.test(status)) return 'running';
-  return 'unknown';
+function jobPhase(status: string | undefined): Phase {
+  return (status && PHASES[status]) || 'unknown';
 }
 
 /**
@@ -45,7 +58,7 @@ export default function PushDialog({
 
   // Poll the site job every 3 s while it is still being processed there.
   useEffect(() => {
-    if (!job?.id || phase === 'ready' || phase === 'failed') return;
+    if (job?.id === undefined || phase !== 'running') return;
     let alive = true;
     const t = setInterval(async () => {
       try {
@@ -137,9 +150,14 @@ export default function PushDialog({
             <b>{fa(sent)} سؤال</b> به سایت فرستاده شد.
           </div>
           <div className="push-job">
-            {phase === 'running' && <span className="save-state save-saving"><i className="save-dot" /> در حال پردازش در سایت…</span>}
-            {phase === 'ready' && <span>آماده‌ی بازبینی در پنل سایت ✓</span>}
-            {phase === 'failed' && <span>پردازش در سایت ناموفق بود.</span>}
+            {phase === 'running' && (
+              <span className="save-state save-saving">
+                <i className="save-dot" /> در حال پردازش در سایت… ({STATUS_FA[job!.status!]})
+              </span>
+            )}
+            {phase === 'review' && <span>آماده‌ی بازبینی در پنل سایت ✓ ({STATUS_FA[job!.status!]})</span>}
+            {phase === 'imported' && <span>ثبت شد ✓</span>}
+            {phase === 'failed' && <span>پردازش در سایت ناموفق بود ({STATUS_FA[job!.status!]}).</span>}
             {phase === 'unknown' && job?.status && <span>وضعیت در سایت: {job.status}</span>}
             {job?.total_items !== undefined && <span className="muted small"> · {fa(job.total_items)} مورد</span>}
             {job?.id !== undefined && <span className="muted small"> · شناسه‌ی کار: {fa(String(job.id))}</span>}

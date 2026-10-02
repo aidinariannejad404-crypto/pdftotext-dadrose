@@ -104,11 +104,11 @@ class JobRunner:
             project = self.store.load(project_id)
             if blueprint:
                 project.blueprint = blueprint
-            result = build_questions(booklet, explanations, project.blueprint)
+            result = build_questions(
+                booklet, explanations, project.blueprint, default_subject=project.default_subject
+            )
             project.questions = result.questions
             project.issues = result.issues
-            if project.default_subject:
-                self._apply_default_subject(project)
             if project.doc_type == "auto":
                 project.mode = _detect_mode(result)
             else:
@@ -118,16 +118,6 @@ class JobRunner:
             project.progress.stage = "done"
             self.store.save(project)
             return project
-
-    @staticmethod
-    def _apply_default_subject(project: Project) -> None:
-        from .validate import validate_question
-
-        has_explanations = any(d.kind == "explanations" for d in project.documents)
-        for question in project.questions:
-            if not question.subject_key:
-                question.subject_key = project.default_subject
-                question.issues = validate_question(question, has_explanations)
 
     def load_doc(self, project_id: str, kind: DocKind) -> DocumentResult | None:
         return self.store.load_document(project_id, kind)

@@ -168,7 +168,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
   if (jm) {
     const j = jobs.get(Number(jm[1]));
     if (!j) return notFound(res, 'کار پیدا نشد.'), true;
-    const status = Date.now() - j.started > 4000 ? 'ready' : 'processing';
+    const age = Date.now() - j.started;
+    const status = age > 4000 ? 'needs_review' : age > 1500 ? 'parsing' : 'queued';
     return send(res, 200, { id: Number(jm[1]), status, total_items: j.total }), true;
   }
   if (path === '/api/__mock/reset' && method === 'POST') {
@@ -404,7 +405,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
     const n = p.questions.filter((q) => !only_approved || q.status === 'approved').length;
     const id = ++jobSeq;
     jobs.set(id, { started: Date.now(), total: n });
-    return send(res, 200, { ok: true, questions: n, response: { id, status: 'processing', total_items: n } }), true;
+    return send(res, 200, { ok: true, questions: n, response: { id, status: 'queued', total_items: n } }), true;
   }
 
   if (rest === '/classify' && method === 'POST') {

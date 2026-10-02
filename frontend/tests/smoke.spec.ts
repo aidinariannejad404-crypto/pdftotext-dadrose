@@ -443,6 +443,7 @@ test('direct push: connection test and site job status', async ({ page }) => {
   await expect(page.getByTestId('push-check-result')).toContainText('اتصال به سایت برقرار است');
   await page.getByTestId('push-send').click();
   await expect(page.getByTestId('push-result')).toContainText('۲ سؤال');
-  await expect(page.getByTestId('push-result')).toContainText('در حال پردازش در سایت');
-  await expect(page.getByTestId('push-result')).toContainText('آماده‌ی بازبینی در پنل سایت', { timeout: 12_000 });
+  await expect(page.getByTestId('push-result')).toContainText('در حال پردازش در سایت… (در صف)');
+  await expect(page.getByTestId('push-result')).toContainText('(در حال پردازش)', { timeout: 8_000 });
+  await expect(page.getByTestId('push-result')).toContainText('آماده‌ی بازبینی در پنل سایت ✓ (نیازمند بازبینی)', { timeout: 12_000 });
 });
