@@ -546,16 +546,22 @@ def classify(project_id: str, body: ClassifyBody | None = None):
         status = engine_status(settings)
         engine = settings.default_ai_engine if status.get(settings.default_ai_engine) else "rules"
     classify_project(targets, blueprint=project.blueprint, default_subject=project.default_subject)
+    usage = None
     if engine in ("claude", "gemini"):
         from .ai_classify import classify_with_ai
         from .ocr.llm import AiEngineError
 
         try:
-            classify_with_ai(targets, engine, settings)
+            usage = classify_with_ai(targets, engine, settings)
         except AiEngineError as exc:
             raise HTTPException(502, str(exc)) from exc
     with store.lock(project_id):
         fresh = _load(project_id)
+        if usage is not None:
+            from .jobs import ai_cost
+
+            fresh.stats.ai_usage.add(usage)
+            fresh.stats.ai_cost_usd = ai_cost(fresh.stats.ai_usage, engine, settings)
         by_number = {q.number: q for q in targets}
         for index, question in enumerate(fresh.questions):
             done = by_number.get(question.number)

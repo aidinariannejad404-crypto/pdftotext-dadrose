@@ -6,9 +6,11 @@ API supports it). Results get source "ai"; fields an admin set ("manual") are ke
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
+from pathlib import Path
 
 import anthropic
 import httpx
@@ -16,14 +18,18 @@ import httpx
 from .blueprints import SUBJECT_KEYS, SUBJECTS
 from .classify import law_key_for_name, load_laws, topics_by_subject
 from .config import Settings
-from .models import ArticleRef, Question
+from .models import AiUsage, ArticleRef, Question
 from .normalize import normalize_text, to_persian_digits
 from .ocr.llm import AiEngineError, claude_configured, gemini_configured
 
 log = logging.getLogger(__name__)
 
-BATCH_SIZE = 15
-EXPLANATION_CHARS = 600
+BATCH_SIZE = 25
+STEM_CHARS = 400
+OPTION_CHARS = 120
+EXPLANATION_CHARS = 300
+CONFIDENT = 0.6  # rules results at or above this are not sent to the AI
+PROMPT_VERSION = "classify-v2"  # bump when the prompt/schema changes (invalidates the cache)
 
 SCHEMA: dict = {
     "type": "object",
@@ -63,37 +69,98 @@ SCHEMA: dict = {
 
 
 def _instructions(taxonomy: dict[str, list[str]]) -> str:
-    subjects = "\n".join(f"- {s['key']}: {s['name']}" for s in SUBJECTS)
+    """Prompt head; `taxonomy` holds only the topics of the batch's likely subjects."""
+    subjects = "، ".join(f"{s['key']}={s['name']}" for s in SUBJECTS)
     topics = "\n".join(f"- {key}: {'، '.join(names)}" for key, names in taxonomy.items() if names)
-    laws = "، ".join(law.name for law in load_laws().values())
+    topics_part = f" فهرست مباحث:\n{topics}" if topics else ""
     return f"""\
-تو دستیار دسته‌بندی سؤال‌های چهارگزینه‌ای آزمون‌های حقوقی ایران (وکالت، قضاوت، ارشد) هستی.
-برای هر سؤال تعیین کن:
-- subject_key: درس سؤال، فقط از این فهرست (اگر مطمئن نیستی "unknown"):
-{subjects}
-- topic: مبحث سؤال. در صورت امکان دقیقاً یکی از نام‌های این فهرست برای همان درس؛ اگر هیچ‌کدام مناسب نیست یک عنوان کوتاه فارسی بنویس:
-{topics}
-- articles: مواد/اصول قانونی که سؤال درباره‌ی آن است (فقط اگر با اطمینان می‌دانی؛ از متن سؤال و پاسخ تشریحی).
-  law: نام کامل قانون (مثلاً «قانون مدنی»؛ قوانین شناخته‌شده: {laws})، kind: «ماده» یا «اصل»،
-  number: شماره (مثلاً «۱۹۰» یا «۱۰ مکرر»)، clause: بند/تبصره در صورت وجود وگرنه "".
-- confidence: عددی بین ۰ و ۱.
-حدس‌های فعلی سیستم داده شده؛ اگر درست‌اند همان‌ها را برگردان.
-خروجی فقط JSON با کلید questions باشد."""
+سؤال‌های چهارگزینه‌ای آزمون حقوقی ایران را دسته‌بندی کن. برای هر سؤال:
+- subject_key: یکی از {subjects} (یا "unknown").
+- topic: مبحث؛ در صورت امکان دقیقاً یکی از نام‌های فهرست همان درس، وگرنه عنوان کوتاه فارسی.{topics_part}
+- articles: مواد/اصولی که سؤال درباره‌ی آن است، فقط با اطمینان: law (نام کامل قانون)، \
+kind («ماده»/«اصل»)، number، clause (بند/تبصره یا "").
+- confidence: ۰ تا ۱.
+guess حدس فعلی سیستم است. خروجی فقط JSON با کلید questions."""
+
+
+def _clip(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def _payload(q: Question) -> dict:
     return {
         "number": q.number,
-        "stem": q.stem,
-        "options": {o.key: o.text for o in q.options},
-        "explanation": q.explanation[:EXPLANATION_CHARS],
-        "current_guess": {
-            "subject_key": q.subject_key,
+        "stem": _clip(q.stem, STEM_CHARS),
+        "options": [_clip(o.text, OPTION_CHARS) for o in q.options],
+        "explanation": _clip(q.explanation, EXPLANATION_CHARS),
+        "refs": [f"{a.kind} {a.number} {a.law}".strip() for a in q.articles[:5]],
+        "guess": {
+            "subject": q.subject_key,
             "topic": q.topic,
-            "articles": [f"{a.kind} {a.number} {a.law}".strip() for a in q.articles[:5]],
-            "section_path": q.classification.section_path,
+            "headings": q.classification.section_path[-2:],
         },
     }
+
+
+def needs_ai(q: Question) -> bool:
+    """True when the rules left the subject or topic missing / uncertain (< 0.6).
+
+    Fields an admin set ("manual") never count; a topic only counts when the
+    question's subject has taxonomy topics (or the subject itself is unknown)."""
+    c = q.classification
+    need_subject = c.subject_source != "manual" and (
+        not q.subject_key or (c.subject_confidence or 0.0) < CONFIDENT
+    )
+    has_topics = not q.subject_key or bool(topics_by_subject().get(q.subject_key))
+    need_topic = (
+        c.topic_source != "manual"
+        and has_topics
+        and (not q.topic or (c.topic_confidence or 0.0) < CONFIDENT)
+    )
+    return need_subject or need_topic
+
+
+# ------------------------------------------------------------------------ cache
+
+
+class _Cache:
+    """Tiny JSON-file cache: one file per answer, keyed by a sha256 hex digest."""
+
+    def __init__(self, settings: Settings) -> None:
+        self.dir = Path(settings.data_dir) / "ai-cache" / "classify"
+        self.enabled = bool(getattr(settings, "ai_cache", True))
+
+    @staticmethod
+    def key(provider: str, model: str, payload: dict) -> str:
+        blob = json.dumps(
+            [provider, model, PROMPT_VERSION, payload], ensure_ascii=False, sort_keys=True
+        )
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+    def _path(self, key: str) -> Path:
+        return self.dir / key[:2] / f"{key}.json"
+
+    def get(self, key: str) -> dict | None:
+        if not self.enabled:
+            return None
+        try:
+            data = json.loads(self._path(key).read_text("utf-8"))
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def put(self, key: str, value: dict) -> None:
+        if not self.enabled:
+            return
+        path = self._path(key)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(value, ensure_ascii=False), "utf-8")
+            tmp.replace(path)
+        except OSError as exc:  # a cache failure must never fail the classification
+            log.warning("AI cache write failed: %s", exc)
 
 
 def _parse_json(text: str) -> dict:
@@ -126,11 +193,18 @@ class _Claude:
         )
         self._structured = True
 
-    def _create(self, prompt: str):
+    provider = "claude"
+
+    @property
+    def model(self) -> str:
+        return self.settings.claude_model
+
+    def _create(self, prompt: str, max_tokens: int):
         s = self.settings
+        effort = getattr(s, "ai_ocr_effort", "") or s.claude_effort
         common = {
             "model": s.claude_model,
-            "max_tokens": 16000,
+            "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": prompt}],
         }
         if self._structured:
@@ -138,7 +212,7 @@ class _Claude:
                 return self.client.messages.create(
                     **common,
                     output_config={
-                        "effort": s.claude_effort,
+                        "effort": effort,
                         "format": {"type": "json_schema", "schema": SCHEMA},
                     },
                 )
@@ -148,11 +222,11 @@ class _Claude:
                     raise
                 log.warning("Claude rejected structured output; asking for JSON in the prompt")
                 self._structured = False
-        return self.client.messages.create(**common, output_config={"effort": s.claude_effort})
+        return self.client.messages.create(**common, output_config={"effort": effort})
 
-    def ask(self, prompt: str) -> dict:
+    def ask(self, prompt: str, max_tokens: int) -> tuple[dict, AiUsage]:
         try:
-            response = self._create(prompt)
+            response = self._create(prompt, max_tokens)
         except anthropic.RateLimitError as exc:
             raise AiEngineError("محدودیت تعداد درخواست Claude؛ کمی بعد دوباره تلاش کنید.") from exc
         except anthropic.APIStatusError as exc:
@@ -166,7 +240,15 @@ class _Claude:
         if response.stop_reason == "refusal":
             raise AiEngineError("Claude از دسته‌بندی این سؤال‌ها خودداری کرد.")
         text = "".join(b.text for b in response.content if getattr(b, "type", None) == "text")
-        return _parse_json(text)
+        usage = getattr(response, "usage", None)
+        spent = AiUsage(
+            calls=1,
+            input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
+            output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+        )
+        if response.stop_reason == "max_tokens":
+            log.warning("Claude classification hit max_tokens; trying to parse what came back")
+        return _parse_json(text), spent
 
 
 class _Gemini:
@@ -174,7 +256,14 @@ class _Gemini:
         self.settings = settings
         self.client = client or httpx.Client(timeout=settings.ai_timeout_seconds)
 
-    def ask(self, prompt: str) -> dict:
+    provider = "gemini"
+
+    @property
+    def model(self) -> str:
+        return self.settings.gemini_model
+
+    def ask(self, prompt: str, max_tokens: int) -> tuple[dict, AiUsage]:
+        # max_tokens is not forwarded: Gemini 2.5 counts thinking tokens against it.
         s = self.settings
         url = f"{s.gemini_base_url.rstrip('/')}/v1beta/models/{s.gemini_model}:generateContent"
         body = {
@@ -194,10 +283,18 @@ class _Gemini:
         if r.status_code >= 400:
             raise AiEngineError(f"خطای سرویس Gemini (کد {r.status_code}).")
         try:
-            parts = r.json()["candidates"][0].get("content", {}).get("parts", [])
+            data = r.json()
+            parts = data["candidates"][0].get("content", {}).get("parts", [])
         except (ValueError, KeyError, IndexError) as exc:
             raise AiEngineError("پاسخ Gemini قابل خواندن نبود یا خالی بود.") from exc
-        return _parse_json("".join(p.get("text", "") for p in parts))
+        meta = data.get("usageMetadata") or {}
+        spent = AiUsage(
+            calls=1,
+            input_tokens=int(meta.get("promptTokenCount", 0) or 0),
+            output_tokens=int(meta.get("candidatesTokenCount", 0) or 0)
+            + int(meta.get("thoughtsTokenCount", 0) or 0),
+        )
+        return _parse_json("".join(p.get("text", "") for p in parts)), spent
 
 
 def _engine(engine_name: str, settings: Settings, client=None):
@@ -263,27 +360,59 @@ def classify_with_ai(
     questions: list[Question],
     engine_name: str,
     settings: Settings,
-    taxonomy: dict[str, list[str]] | None = None,
+    only_uncertain: bool = True,
     *,
+    taxonomy: dict[str, list[str]] | None = None,
     client=None,
-) -> None:
-    """Refine subject/topic/articles with Claude or Gemini (mutates `questions`)."""
-    if not questions:
-        return
-    engine = _engine(engine_name, settings, client)
-    taxonomy = taxonomy or {s: [t.name for t in ts] for s, ts in topics_by_subject().items()}
-    head = _instructions(taxonomy)
-    by_number = {q.number: q for q in questions}
-    for start in range(0, len(questions), BATCH_SIZE):
-        batch = questions[start : start + BATCH_SIZE]
-        prompt = (
-            head
-            + "\n\nسؤال‌ها:\n"
-            + json.dumps({"questions": [_payload(q) for q in batch]}, ensure_ascii=False)
+) -> AiUsage:
+    """Refine subject/topic/articles with Claude or Gemini (mutates `questions`).
+
+    With `only_uncertain` (default) only questions the rules could not settle are
+    sent (see `needs_ai`). Answers are cached on disk per question payload, so a
+    re-run costs nothing. Returns the token usage of the calls actually made.
+    """
+    usage = AiUsage()
+    targets = [q for q in questions if needs_ai(q)] if only_uncertain else list(questions)
+    targets = [
+        q
+        for q in targets
+        if not (
+            q.classification.subject_source == "manual"
+            and q.classification.topic_source == "manual"
         )
-        data = engine.ask(prompt)
+    ]
+    if not targets:
+        return usage
+    engine = _engine(engine_name, settings, client)
+    cache = _Cache(settings)
+    all_topics = taxonomy or {s: [t.name for t in ts] for s, ts in topics_by_subject().items()}
+
+    pending: list[tuple[Question, dict, str]] = []
+    for q in targets:
+        payload = _payload(q)
+        key = cache.key(engine.provider, engine.model, payload)
+        cached = cache.get(key)
+        if cached is not None:
+            _apply(q, cached)
+            usage.cached += 1
+        else:
+            pending.append((q, payload, key))
+
+    for start in range(0, len(pending), BATCH_SIZE):
+        batch = pending[start : start + BATCH_SIZE]
+        subjects = {q.subject_key for q, _, _ in batch if q.subject_key}
+        prompt = (
+            _instructions({s: all_topics.get(s, []) for s in sorted(subjects)})
+            + "\n\n"
+            + json.dumps({"questions": [p for _, p, _ in batch]}, ensure_ascii=False)
+        )
+        data, spent = engine.ask(prompt, max_tokens=120 * len(batch) + 300)
+        usage.add(spent)
+        by_number = {q.number: (q, key) for q, _, key in batch}
         for item in data["questions"]:
             if isinstance(item, dict) and isinstance(item.get("number"), int):
-                q = by_number.get(item["number"])
-                if q is not None:
-                    _apply(q, item)
+                match = by_number.get(item["number"])
+                if match is not None:
+                    _apply(match[0], item)
+                    cache.put(match[1], item)
+    return usage

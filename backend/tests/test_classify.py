@@ -348,14 +348,37 @@ def _questions(n: int) -> list[Question]:
     return [q(number=i, stem=f"سؤال {i} درباره‌ی تاجر") for i in range(1, n + 1)]
 
 
-def test_ai_claude_batches_structured_output():
-    messages = FakeMessages()
-    questions = _questions(20)
+def _settings(tmp_path, **kw) -> Settings:
+    return Settings(data_dir=tmp_path, **kw)
+
+
+def _usage_messages(messages: FakeMessages) -> FakeMessages:
+    original = messages.create
+
+    def create(**kwargs):
+        response = original(**kwargs)
+        response.usage = SimpleNamespace(input_tokens=1000, output_tokens=200)
+        return response
+
+    messages.create = create  # type: ignore[method-assign]
+    return messages
+
+
+def test_ai_claude_batches_structured_output(tmp_path):
+    messages = _usage_messages(FakeMessages())
+    questions = _questions(30)
     questions[0].classification.topic_source = "manual"
+    questions[0].classification.subject_source = "manual"
     questions[0].topic = "دستی"
-    classify_with_ai(questions, "claude", Settings(), client=SimpleNamespace(messages=messages))
-    assert len(messages.calls) == 2  # 15 + 5
-    assert messages.calls[0]["output_config"]["format"]["type"] == "json_schema"
+    usage = classify_with_ai(
+        questions, "claude", _settings(tmp_path), client=SimpleNamespace(messages=messages)
+    )
+    assert len(messages.calls) == 2  # 29 sent: 25 + 4 (the fully manual one is skipped)
+    first = messages.calls[0]
+    assert first["output_config"]["format"]["type"] == "json_schema"
+    assert first["output_config"]["effort"] == "low"  # settings.ai_ocr_effort
+    assert first["max_tokens"] == 120 * 25 + 300
+    assert usage.calls == 2 and usage.input_tokens == 2000 and usage.output_tokens == 400
     last = questions[-1]
     assert last.subject_key == "commercial" and last.classification.subject_source == "ai"
     assert last.topic == "ورشکستگی" and last.classification.topic_source == "ai"
@@ -363,43 +386,118 @@ def test_ai_claude_batches_structured_output():
         ("commercial_code", "۴۱۲", "ai")
     ]
     assert questions[0].topic == "دستی"
+    assert '"number": 1,' not in first["messages"][0]["content"]
 
 
-def test_ai_claude_falls_back_to_prompted_json():
+def test_ai_skips_questions_the_rules_settled(tmp_path):
+    certain = q(number=1, stem="طبق ماده ۴۶۶ قانون مدنی اجاره چیست؟")
+    classify_question(certain)
+    assert certain.classification.subject_confidence >= 0.6
+    assert certain.classification.topic_confidence >= 0.6
+    uncertain = q(number=2, stem="کدام گزینه صحیح است؟")
+    classify_question(uncertain)
+    messages = FakeMessages()
+    usage = classify_with_ai(
+        [certain, uncertain],
+        "claude",
+        _settings(tmp_path),
+        client=SimpleNamespace(messages=messages),
+    )
+    prompt = messages.calls[0]["messages"][0]["content"]
+    assert '"number": 2' in prompt and '"number": 1,' not in prompt
+    assert certain.topic == "اجاره" and certain.classification.topic_source == "rules"
+    assert usage.calls == 1
+    # only the likely subjects' topics are listed, not the whole taxonomy
+    assert "شورای نگهبان" not in prompt
+    # everything certain: no call at all, even without a configured engine
+    assert classify_with_ai([certain], "claude", _settings(tmp_path)).calls == 0
+    # only_uncertain=False sends it anyway
+    classify_with_ai(
+        [certain], "claude", _settings(tmp_path), False, client=SimpleNamespace(messages=messages)
+    )
+    assert len(messages.calls) == 2
+
+
+def test_ai_payload_is_compact(tmp_path):
+    long_q = q(
+        number=1,
+        stem="ب" * 1000,
+        options=["الف" * 100, "ب", "ج", "د"],
+        explanation="ت" * 2000,
+    )
+    messages = FakeMessages()
+    classify_with_ai(
+        [long_q], "claude", _settings(tmp_path), client=SimpleNamespace(messages=messages)
+    )
+    sent = json.loads(messages.calls[0]["messages"][0]["content"].split("\n\n", 1)[1])
+    item = sent["questions"][0]
+    assert len(item["stem"]) <= 400 and len(item["options"][0]) <= 120
+    assert len(item["explanation"]) <= 300
+
+
+def test_ai_cache_hit_avoids_the_client(tmp_path):
+    messages = FakeMessages()
+    client = SimpleNamespace(messages=messages)
+    classify_with_ai(_questions(3), "claude", _settings(tmp_path), client=client)
+    assert len(messages.calls) == 1
+    again = _questions(3)
+    usage = classify_with_ai(again, "claude", _settings(tmp_path), client=client)
+    assert len(messages.calls) == 1  # served from disk
+    assert usage.cached == 3 and usage.calls == 0
+    assert again[2].topic == "ورشکستگی" and again[2].classification.topic_source == "ai"
+    assert list((tmp_path / "ai-cache" / "classify").rglob("*.json"))
+    # cache disabled -> the client is called again
+    classify_with_ai(_questions(3), "claude", _settings(tmp_path, ai_cache=False), client=client)
+    assert len(messages.calls) == 2
+
+
+def test_ai_claude_falls_back_to_prompted_json(tmp_path):
     messages = FakeMessages(reject_format=True)
     questions = _questions(2)
-    classify_with_ai(questions, "claude", Settings(), client=SimpleNamespace(messages=messages))
+    classify_with_ai(
+        questions, "claude", _settings(tmp_path), client=SimpleNamespace(messages=messages)
+    )
     assert "format" not in messages.calls[-1]["output_config"]
     assert questions[1].topic == "ورشکستگی"
 
 
-def test_ai_called_like_main_py(monkeypatch):
+def test_ai_called_like_main_py(monkeypatch, tmp_path):
     messages = FakeMessages()
     monkeypatch.setattr(
         ai_classify.anthropic, "Anthropic", lambda **_: SimpleNamespace(messages=messages)
     )
     questions = _questions(1)
-    classify_with_ai(questions, "claude", Settings(anthropic_api_key="test"))
-    assert questions[0].subject_key == "commercial"
+    usage = classify_with_ai(questions, "claude", _settings(tmp_path, anthropic_api_key="test"))
+    assert questions[0].subject_key == "commercial" and usage.calls == 1
     with pytest.raises(AiEngineError):
-        classify_with_ai(questions, "claude", Settings(anthropic_api_key=""))
+        classify_with_ai(_questions(2), "claude", _settings(tmp_path, anthropic_api_key=""))
 
 
-def test_ai_gemini_and_errors():
+def test_ai_gemini_usage_and_errors(tmp_path):
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         assert body["generationConfig"]["responseMimeType"] == "application/json"
         text = json.dumps(_ai_answer([1]), ensure_ascii=False)
-        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": text}]}}]})
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [{"content": {"parts": [{"text": text}]}}],
+                "usageMetadata": {"promptTokenCount": 500, "candidatesTokenCount": 80},
+            },
+        )
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     questions = _questions(1)
-    classify_with_ai(questions, "gemini", Settings(gemini_api_key="k"), client=client)
+    usage = classify_with_ai(
+        questions, "gemini", _settings(tmp_path, gemini_api_key="k"), client=client
+    )
     assert questions[0].topic == "ورشکستگی"
+    assert (usage.calls, usage.input_tokens, usage.output_tokens) == (1, 500, 80)
 
+    no_cache = _settings(tmp_path, gemini_api_key="k", ai_cache=False)
     failing = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(500)))
     with pytest.raises(AiEngineError):
-        classify_with_ai(_questions(1), "gemini", Settings(gemini_api_key="k"), client=failing)
+        classify_with_ai(_questions(1), "gemini", no_cache, client=failing)
     garbage = httpx.Client(
         transport=httpx.MockTransport(
             lambda r: httpx.Response(
@@ -408,7 +506,7 @@ def test_ai_gemini_and_errors():
         )
     )
     with pytest.raises(AiEngineError):
-        classify_with_ai(_questions(1), "gemini", Settings(gemini_api_key="k"), client=garbage)
+        classify_with_ai(_questions(1), "gemini", no_cache, client=garbage)
 
 
 def test_rules_classification_called_like_main_py():
