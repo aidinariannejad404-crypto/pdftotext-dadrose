@@ -600,18 +600,43 @@ class PushBody(BaseModel):
 
 @app.post("/api/projects/{project_id}/push")
 def push(project_id: str, body: PushBody | None = None):
-    from .export import push_to_dadrose, to_dadrose_payload
+    """Upload the Word export into the site's smart import (reviewed and committed there)."""
+    from .export_docx import to_docx
+    from .site_import import SiteImportError, upload_docx
 
     body = body or PushBody()
     project = _load(project_id)
-    payload = to_dadrose_payload(project, body.only_approved)
-    if not payload["questions"]:
+    if project.mode != "questions":
+        raise HTTPException(400, "ارسال مستقیم فقط برای سؤال‌ها ممکن است؛ متن کامل را دانلود کنید.")
+    selected = [q for q in project.questions if not body.only_approved or q.status == "approved"]
+    if not selected:
         raise HTTPException(400, "سؤالی برای ارسال وجود ندارد.")
+    data = to_docx(project, body.only_approved)
     try:
-        response = push_to_dadrose(payload, settings)
-    except Exception as exc:
+        job = upload_docx(data, f"dadrose-{project.id}.docx", settings)
+    except SiteImportError as exc:
         raise HTTPException(502, str(exc)) from exc
-    return {"ok": True, "response": response}
+    return {"ok": True, "questions": len(selected), "response": job}
+
+
+@app.get("/api/site/import-jobs/{job_id}")
+def site_job(job_id: int):
+    from .site_import import SiteImportError, job_status
+
+    try:
+        return job_status(job_id, settings)
+    except SiteImportError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@app.get("/api/site/check")
+def site_check():
+    from .site_import import SiteImportError, check_connection
+
+    try:
+        return check_connection(settings)
+    except SiteImportError as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
 # ------------------------------------------------------------------ static UI

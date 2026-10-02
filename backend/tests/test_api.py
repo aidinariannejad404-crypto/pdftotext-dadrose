@@ -197,3 +197,27 @@ def test_text_mode_end_to_end(client):
     assert reset["edited"] is False
     switched = client.post(f"/api/projects/{pid}/mode", json={"mode": "questions"}).json()
     assert switched["mode"] == "questions" and len(switched["questions"]) == 4
+
+
+def test_push_uploads_docx_to_site(client, monkeypatch):
+    from app import site_import
+
+    created = _upload(client, [("b.pdf", fixtures_gen.booklet_pdf(), "application/pdf")])
+    pid = _wait_ready(client, created["id"])["id"]
+    sent = {}
+
+    def fake_upload(data, filename, settings):
+        sent.update(size=len(data), filename=filename)
+        return {"id": 7, "status": "queued"}
+
+    monkeypatch.setattr(site_import, "upload_docx", fake_upload)
+    assert client.post(f"/api/projects/{pid}/push", json={"only_approved": True}).status_code == 400
+    response = client.post(f"/api/projects/{pid}/push", json={"only_approved": False}).json()
+    assert response == {"ok": True, "questions": 4, "response": {"id": 7, "status": "queued"}}
+    assert sent["filename"].endswith(".docx") and sent["size"] > 1000
+
+
+def test_site_check_reports_missing_config(client):
+    response = client.get("/api/site/check")
+    assert response.status_code == 502
+    assert "پیکربندی" in response.json()["detail"]
