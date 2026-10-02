@@ -2739,3 +2739,54 @@ kbd {
     max-width: none;
   }
 }
+.doc-type-options {
+  grid-template-columns: repeat(4, 1fr);
+}
+@media (max-width: 1000px) {
+  .doc-type-options {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (max-width: 520px) {
+  .doc-type-options {
+    grid-template-columns: 1fr;
+  }
+}
+.flag-list {
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+}
+.flags-foot {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.flags-foot:empty {
+  display: none;
+}
+.flags-foot {
+  margin-top: 4px;
+}
+.flags-expl {
+  margin-top: 2px;
+}
+.editor-actions {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+.editor-actions .btn {
+  flex: none;
+}
+@media (max-width: 1500px) {
+  .editor-actions kbd {
+    display: none;
+  }
+}
+.subject-select select {
+  max-width: 170px;
+}
+.editor-actions { overflow-x: auto; }
+.flag-row .flag-word b {
+  flex: none;
+  max-width: 60%;
+}

@@ -206,24 +206,26 @@ function FlagsPanel({
         <span className="muted small"> — با تصویر مقایسه کنید: ✓ درست است، ⇄ جایگزینی</span>
       </h3>
       {main.length > 0 && <ul className="flag-list">{visible.map(row)}</ul>}
-      {main.length > MAX_VISIBLE && (
-        <button className="link small flags-more" onClick={() => setShowAll((v) => !v)} data-testid="flags-more">
-          {showAll ? 'نمایش کمتر' : `نمایش همه (${fa(main.length)})`}
-        </button>
-      )}
+      <div className="flags-foot small">
+        {main.length > MAX_VISIBLE && (
+          <button className="link" onClick={() => setShowAll((v) => !v)} data-testid="flags-more">
+            {showAll ? 'نمایش کمتر' : `نمایش همه (${fa(main.length)})`}
+          </button>
+        )}
+        {stale.length > 0 && (
+          <span className="muted">
+            {fa(stale.length)} مورد دیگر در متن فعلی نیست —{' '}
+            <button className="link" onClick={() => onDropFlags(stale)} data-testid="flags-drop-stale">
+              حذف از فهرست
+            </button>
+          </span>
+        )}
+      </div>
       {expl.length > 0 && (
         <details className="flags-expl">
           <summary className="small">در پاسخ تشریحی ({fa(expl.length)})</summary>
           <ul className="flag-list">{expl.map(row)}</ul>
         </details>
-      )}
-      {stale.length > 0 && (
-        <div className="small muted flags-stale">
-          {fa(stale.length)} کلمه‌ی مشکوک دیگر در متن فعلی نیست.{' '}
-          <button className="link" onClick={() => onDropFlags(stale)} data-testid="flags-drop-stale">
-            حذف از فهرست
-          </button>
-        </div>
       )}
     </section>
   );
@@ -288,6 +290,25 @@ export default function Editor(props: Props) {
           )}
         </div>
         <div className="editor-head-tools">
+          <label className="subject-select" title="درس این سؤال">
+            <span className="visually-hidden">درس</span>
+            <select
+              id={`${uid}-subject`}
+              data-field="subject"
+              className={cx('input input-sm', !draft.subject_key && 'is-warning', hasErrorAt('subject') && 'is-invalid')}
+              value={draft.subject_key ?? ''}
+              onChange={(e) => onChange({ subject_key: e.target.value || null }, true)}
+              aria-label="درس"
+            >
+              <option value="">— درس را انتخاب کنید —</option>
+              {!knownSubject && <option value={draft.subject_key!}>{draft.subject_key}</option>}
+              {subjects.map((x) => (
+                <option key={x.key} value={x.key}>
+                  {x.name}
+                </option>
+              ))}
+            </select>
+          </label>
           <SaveIndicator state={saveState} onRetry={onSave} />
           <NextProblemButton np={nextProblem} className="btn-sm hide-mobile" />
         </div>
@@ -318,27 +339,6 @@ export default function Editor(props: Props) {
           onDropFlags={onDropFlags}
           labelId={`${uid}-flags`}
         />
-        <div className={cx('field-block', hasErrorAt('subject') && 'needs-attention-soft')}>
-          <label className="field-label" htmlFor={`${uid}-subject`}>
-            درس
-          </label>
-          <select
-            id={`${uid}-subject`}
-            data-field="subject"
-            className={cx('input', !draft.subject_key && 'is-warning')}
-            value={draft.subject_key ?? ''}
-            onChange={(e) => onChange({ subject_key: e.target.value || null }, true)}
-          >
-            <option value="">— درس را انتخاب کنید —</option>
-            {!knownSubject && <option value={draft.subject_key!}>{draft.subject_key}</option>}
-            {subjects.map((s) => (
-              <option key={s.key} value={s.key}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
         <div className="field-block">
           <label className="field-label" htmlFor={`${uid}-stem`}>
             صورت سؤال

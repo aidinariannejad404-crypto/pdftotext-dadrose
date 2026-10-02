@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "test": "playwright test",
-    "screenshots": "playwright test tests/screenshots.spec.ts"
+    "screenshots": "playwright test tests/screenshots.spec.ts",
+    "test:real": "playwright test -c playwright.real.config.ts"
   },
   "dependencies": {
     "react": "^19.2.0",

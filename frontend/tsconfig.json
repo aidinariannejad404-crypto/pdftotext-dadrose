@@ -15,5 +15,5 @@
     "allowImportingTsExtensions": true,
     "types": ["vite/client", "node"]
   },
-  "include": ["src", "mock", "tests", "vite.config.ts", "playwright.config.ts"]
+  "include": ["src", "mock", "tests", "tests-real", "vite.config.ts", "playwright.config.ts", "playwright.real.config.ts"]
 }

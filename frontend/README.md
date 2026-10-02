@@ -20,7 +20,7 @@ Playwright uses the pre-installed Chromium (`PLAYWRIGHT_BROWSERS_PATH`); `@playw
 
 ## UX flow (for non-technical admins)
 
-1. Projects page: dismissible 3-step guide (remembered in localStorage), simplified upload — booklet file(s) + آزمون + سال are required; PDFs and/or page photos (JPG/PNG/HEIC…, several files, reorderable = page order); title and blueprint are auto-filled (blueprint/engine live under «تنظیمات پیشرفته»). The submit button explains what is missing.
+1. Projects page: «نوع محتوا» = تشخیص خودکار / دفترچه‌ی آزمون رسمی (track+year, blueprint auto) / کتاب تست (optional `default_subject`, no track/year) / متن کامل; after upload the app jumps to the new project. Dismissible 3-step guide (remembered in localStorage), simplified upload — booklet file(s) + آزمون + سال are required; PDFs and/or page photos (JPG/PNG/HEIC…, several files, reorderable = page order); title and blueprint are auto-filled (blueprint/engine live under «تنظیمات پیشرفته»). The submit button explains what is missing.
 2. Review: actionable issue sentences (click → focuses the field), suspicious-word cards («X یا Y؟» → keep / use alternative, persisted via `PUT … {flags}`), «خطای بعدی» (F8 / Alt+N), help dialog (`?`), completion card with the Word download + import steps.
 3. Export: «دانلود فایل Word» (`/export.docx`, the site's «ورود هوشمند از ورد» template) is the primary action; JSON and direct push live in «بیشتر» (push disabled unless `health.push_configured`).
 
@@ -31,6 +31,18 @@ Playwright uses the pre-installed Chromium (`PLAYWRIGHT_BROWSERS_PATH`); `@playw
 - **questions** (`ReviewPage` + `Editor`): exam booklets / test books — questions, options, key, explanation, «منبع سؤال» (`source_ref`).
 - **text** (`TextReview`): notes banks, lecture notes, books — page-by-page full-text editor (`GET/PUT /pages/{doc}/{page}/text`, autosave, «بازگردانی متن اصلی» = `text: null`), page thumbnails, «تأیید و صفحه‌ی بعد», «صفحه‌ی مشکوک بعدی», Word/TXT export (`export-text.docx`, `export.txt`). Suspicious words come from the page's OCR `Word.flag/alt` and are highlighted in the editor and on the image.
 - Switch with «بیشتر» → «نمایش به‌صورت متن کامل» / «تبدیل به حالت سؤال» (`POST /mode`). Upload sends `doc_type` (auto / questions / text).
+
+## Real end-to-end test (against the actual backend)
+
+`tests-real/real.spec.ts` drives the real FastAPI backend (which serves `frontend/dist`). Its inputs are generated at runtime by `backend/tests/fixtures_gen.py` (typed booklet PDF + phone-scan photo), so no private files are needed.
+
+```bash
+npm run build
+(cd ../backend && uv run uvicorn app.main:app)      # serves UI + API on http://127.0.0.1:8000
+npm run test:real                                   # REAL_BASE_URL=http://host:port to override
+```
+
+Flow: upload as «دفترچه‌ی آزمون رسمی» (کانون/۱۴۰۴) → auto-navigates → waits for ready (≤120 s) → 4 questions → edit stem, resolve a flag, approve → reload persists → download Word (.docx) → switch to full-text mode → edit + approve a page → download TXT; then the phone photo as «متن کامل» on a 390px viewport. Any console error, page error or HTTP 4xx/5xx fails the test. Uses `/opt/pw-browsers/chromium` (override with `PW_CHROMIUM`).
 
 ## Mock (`mock/`)
 

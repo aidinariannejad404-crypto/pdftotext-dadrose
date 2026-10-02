@@ -18,7 +18,7 @@ test('projects page lists projects and opens review', async ({ page }) => {
 
 test('simplified upload: explains what is missing, auto-fills title and blueprint, accepts several images', async ({ page }) => {
   await page.goto('/#/');
-  await page.getByTestId('doc-type-questions').click();
+  await page.getByTestId('doc-type-exam').click();
   // aria-disabled (not disabled) so clicking still explains what is missing
   await page.getByTestId('submit-upload').click({ force: true });
   await expect(page.getByTestId('submit-reason')).toContainText('فایل دفترچه را انتخاب کنید');
@@ -42,23 +42,45 @@ test('simplified upload: explains what is missing, auto-fills title and blueprin
   await rows.nth(0).getByRole('button', { name: /حذف page-1.jpg/ }).click();
   await expect(rows).toHaveCount(2);
 
-  await page.getByRole('radio', { name: 'مرکز وکلا' }).click();
+  await page.getByRole('radio', { name: 'مرکز وکلا', exact: true }).click();
   await page.locator('#up-year').fill('1404');
   await expect(page.getByTestId('title-input')).toHaveValue('آزمون مرکز وکلا ۱۴۰۴');
   await page.locator('summary', { hasText: 'تنظیمات پیشرفته' }).click();
   await expect(page.getByTestId('blueprint-select')).toHaveValue('CENTER-1404');
   await page.locator('#up-year').fill('1399');
   await expect(page.getByTestId('blueprint-select')).toHaveValue('CENTER-1405'); // latest center
-  await page.getByRole('radio', { name: 'کانون وکلا' }).click();
+  await page.getByRole('radio', { name: 'کانون وکلا', exact: true }).click();
   await expect(page.getByTestId('blueprint-select')).toHaveValue('BAR-1405');
   await page.locator('#up-year').fill('1404');
 
   await expect(page.getByTestId('submit-reason')).toHaveCount(0);
   await page.getByTestId('submit-upload').click();
   await expect(page.getByText(/پردازش شروع شد/)).toBeVisible();
-  const row = page.getByTestId('project-row').filter({ hasText: 'آزمون کانون وکلا ۱۴۰۴' });
-  await expect(row).toBeVisible();
-  await expect(row.getByText('آماده‌ی بازبینی')).toBeVisible({ timeout: 15_000 });
+  // goes straight to the new project's processing view, which turns into the review
+  await expect(page).toHaveURL(/#\/p\/p-/);
+  await expect(page.locator('.processing-card')).toBeVisible();
+  await expect(page.getByTestId('current-number')).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('.review-title h1')).toHaveText('آزمون کانون وکلا ۱۴۰۴');
+});
+
+test('test-book upload: no exam fields, optional subject applied to questions', async ({ page }) => {
+  await page.goto('/#/');
+  await page.getByTestId('doc-type-testbook').click();
+  await expect(page.locator('#up-year')).toHaveCount(0);
+  await expect(page.getByTestId('drop-explanations')).toHaveCount(0);
+  await page.locator('#drop-booklet-input').setInputFiles({
+    name: 'test-book.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4'),
+  });
+  await page.getByTestId('subject-select').selectOption('commercial');
+  await expect(page.getByTestId('title-input')).toHaveValue('کتاب تست حقوق تجارت');
+  await page.getByTestId('submit-upload').click();
+  await expect(page).toHaveURL(/#\/p\/p-/);
+  const id = decodeURIComponent(/#\/p\/([^?]+)/.exec(page.url())![1]);
+  const p = await (await page.request.get(`/api/projects/${id}`)).json();
+  expect(p).toMatchObject({ doc_type: 'questions', track: 'other', year: null, blueprint: 'auto' });
+  await expect(page.getByTestId('current-number')).toBeVisible({ timeout: 20_000 });
+  const ready = await (await page.request.get(`/api/projects/${id}`)).json();
+  expect(ready.questions.every((q: { subject_key: string }) => q.subject_key === 'commercial')).toBe(true);
 });
 
 test('guide can be dismissed and is remembered', async ({ page }) => {
@@ -143,7 +165,8 @@ test('suspicious words: use the alternative reading or keep the current one', as
   await page.goto('/#/p/demo?q=2');
   const cards = page.getByTestId('flag-chip');
   await expect(cards).toHaveCount(2);
-  await expect(cards.first()).toContainText('«مستاجر» یا «مستأجر»؟');
+  await expect(cards.first()).toContainText('مستاجر');
+  await expect(cards.first()).toContainText('یا مستأجر؟');
   // hovering highlights the box on the page image
   await cards.first().hover();
   await expect(page.locator('[data-testid="ov-flag"].is-hover')).toBeVisible();
@@ -235,13 +258,11 @@ test('upload as full text hides exam fields and requires only files + title', as
   await page.getByTestId('title-input').fill('جزوه‌ی مدنی');
   await expect(page.getByTestId('submit-reason')).toHaveCount(0);
   await page.getByTestId('submit-upload').click();
-  await expect(page.getByTestId('project-row').filter({ hasText: 'جزوه‌ی مدنی' })).toBeVisible();
-  const list = await (await page.request.get('/api/projects')).json();
-  const created = list.find((p: { title: string }) => p.title === 'جزوه‌ی مدنی');
-  const full = await (await page.request.get(`/api/projects/${created.id}`)).json();
+  await expect(page).toHaveURL(/#\/p\/p-/);
+  const id = decodeURIComponent(/#\/p\/([^?]+)/.exec(page.url())![1]);
+  const full = await (await page.request.get(`/api/projects/${id}`)).json();
   expect(full.doc_type).toBe('text');
-  const row = page.getByTestId('project-row').filter({ hasText: 'جزوه‌ی مدنی' });
-  await expect(row.getByText('متن کامل')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('current-page')).toBeVisible({ timeout: 20_000 });
 });
 
 test('question mode shows editable source of the question', async ({ page }) => {
@@ -304,4 +325,33 @@ test('text mode: next suspicious page and switching modes', async ({ page }) => 
   await page.getByTestId('menu-mode').click();
   await page.getByTestId('confirm-mode').click();
   await expect(page.getByTestId('current-page')).toBeVisible();
+});
+
+test('many suspicious words stay compact: stem and options remain above the fold', async ({ page }) => {
+  const project = await (await page.request.get('/api/projects/demo')).json();
+  const q2 = project.questions.find((q: { number: number }) => q.number === 2);
+  const words = q2.stem.split(' ').slice(0, 9).map((w: string) => w.replace(/[.،؟]/g, ''));
+  const optWords = q2.options[0].text.split(' ').slice(0, 4);
+  const flags = [
+    ...words.map((w: string, i: number) => ({ field: 'stem', word: w, doc: 'booklet', page: 0, bbox: null, reason: i % 2 ? 'low_conf' : 'disagree', alt: i % 2 ? null : w + 'ه' })),
+    ...optWords.map((w: string) => ({ field: 'option:1', word: w, doc: 'booklet', page: 0, bbox: null, reason: 'low_conf', alt: null })),
+    { field: 'explanation', word: 'ماده‌ی', doc: 'explanations', page: 0, bbox: null, reason: 'low_conf', alt: null },
+    { field: 'stem', word: 'ارشد', doc: 'booklet', page: 0, bbox: null, reason: 'low_conf', alt: null }, // not in text
+  ];
+  await page.request.put('/api/projects/demo/questions/2', { data: { flags } });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/#/p/demo?q=2');
+  await expect(page.locator('.flags-box > .flag-list [data-testid="flag-chip"]')).toHaveCount(4);
+  await expect(page.getByTestId('flags-more')).toContainText('نمایش همه (۱۳)');
+  await expect(page.locator('.flags-expl summary')).toContainText('در پاسخ تشریحی (۱)');
+  await expect(page.getByTestId('flags-drop-stale')).toBeVisible();
+  await page.screenshot({ path: 'screenshots/review-desktop-many-flags.png' });
+  // stem and all four options are visible in the editor viewport
+  const scroller = await page.locator('.editor-scroll').boundingBox();
+  const opt4 = await page.getByTestId('option-4').boundingBox();
+  expect(opt4!.y + opt4!.height).toBeLessThanOrEqual(scroller!.y + scroller!.height);
+  await page.getByTestId('flags-more').click();
+  await expect(page.locator('.flags-box > .flag-list [data-testid="flag-chip"]')).toHaveCount(13);
+  await page.getByTestId('flags-drop-stale').click();
+  await expect(page.getByTestId('flags-drop-stale')).toHaveCount(0);
 });

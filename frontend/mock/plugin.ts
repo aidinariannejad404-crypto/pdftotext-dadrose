@@ -14,6 +14,7 @@ interface MockProject extends Project {
   _duration?: number; // ms until processing finishes
   _set?: PageSet; // which fake page layout the images/OCR come from
   _texts?: Record<string, string>; // text mode: edited page text, keyed "doc:page"
+  _subject?: string; // default_subject from upload
 }
 
 const pageKey = (doc: string, page: number) => `${doc}:${page}`;
@@ -78,6 +79,7 @@ function advance(p: MockProject) {
       p.page_status = {};
       ready.page_status = {};
     }
+    if (p._subject) ready.questions.forEach((q) => (q.subject_key = p._subject!));
     Object.assign(p, {
       ...ready, track: p.track, year: p.year, blueprint: p.blueprint, engine: p.engine,
       documents: p.doc_type === 'text' ? ready.documents : p.documents,
@@ -102,7 +104,8 @@ function summary(p: MockProject): ProjectSummary {
 }
 
 function strip(p: MockProject): Project {
-  const { _startedAt, _duration, _set, _texts, ...rest } = p;
+  const { _startedAt, _duration, _set, _texts, _subject, ...rest } = p;
+  void _subject;
   void _startedAt;
   void _duration;
   void _set;
@@ -176,6 +179,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
       ...base, track, year,
       blueprint: multipartField(body, 'blueprint') || 'auto',
       doc_type: (multipartField(body, 'doc_type') || 'auto') as Project['doc_type'],
+      _subject: multipartField(body, 'default_subject') || undefined,
       engine: (multipartField(body, 'engine') || 'auto') as Project['engine'],
       status: 'queued', progress: { stage: 'queued', done: 0, total: 0 }, questions: [], issues: [],
       documents: /name="explanations"; filename="[^"]+"/.test(body) ? base.documents : base.documents.slice(0, 1),
