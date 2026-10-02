@@ -86,27 +86,58 @@ def build_lines(project: Project, only_approved: bool, exam_header: bool) -> lis
     return lines
 
 
-def to_docx(project: Project, only_approved: bool = False, exam_header: bool = True) -> bytes:
+def _new_document():
     from docx import Document
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml.ns import qn
 
     document = Document()
     normal = document.styles["Normal"]
     normal.font.name = "B Nazanin"
     normal.element.rPr.rFonts.set(qn("w:cs"), "B Nazanin")
+    return document
 
-    for text in build_lines(project, only_approved, exam_header):
-        paragraph = document.add_paragraph(text)
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        # mark the paragraph right-to-left so Word displays Persian correctly
-        p_pr = paragraph._p.get_or_add_pPr()
-        bidi = p_pr.makeelement(qn("w:bidi"), {})
-        p_pr.append(bidi)
-        for run in paragraph.runs:
-            r_pr = run._r.get_or_add_rPr()
-            r_pr.append(r_pr.makeelement(qn("w:rtl"), {}))
 
+def _add_rtl_paragraph(document, text: str, style: str | None = None):
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+
+    paragraph = document.add_paragraph(text, style=style)
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    # mark the paragraph right-to-left so Word displays Persian correctly
+    p_pr = paragraph._p.get_or_add_pPr()
+    p_pr.append(p_pr.makeelement(qn("w:bidi"), {}))
+    for run in paragraph.runs:
+        r_pr = run._r.get_or_add_rPr()
+        r_pr.append(r_pr.makeelement(qn("w:rtl"), {}))
+    return paragraph
+
+
+def _save(document) -> bytes:
     buffer = io.BytesIO()
     document.save(buffer)
     return buffer.getvalue()
+
+
+def to_docx(project: Project, only_approved: bool = False, exam_header: bool = True) -> bytes:
+    document = _new_document()
+    for text in build_lines(project, only_approved, exam_header):
+        _add_rtl_paragraph(document, text)
+    return _save(document)
+
+
+def text_to_docx(title: str, sections: list[tuple[str, list[str]]]) -> bytes:
+    """Full-text mode export: one paragraph per text paragraph, a page break between pages."""
+    from docx.enum.text import WD_BREAK
+
+    document = _new_document()
+    _add_rtl_paragraph(document, title, style="Title")
+    for section_title, pages in sections:
+        if len(sections) > 1:
+            _add_rtl_paragraph(document, section_title, style="Heading 1")
+        for index, page_text in enumerate(pages):
+            for paragraph in page_text.split("\n"):
+                if paragraph.strip():
+                    _add_rtl_paragraph(document, paragraph.strip())
+            if index < len(pages) - 1:
+                document.paragraphs[-1].add_run().add_break(WD_BREAK.PAGE)
+    return _save(document)

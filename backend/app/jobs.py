@@ -107,6 +107,10 @@ class JobRunner:
             result = build_questions(booklet, explanations, project.blueprint)
             project.questions = result.questions
             project.issues = result.issues
+            if project.doc_type == "auto":
+                project.mode = _detect_mode(result)
+            else:
+                project.mode = project.doc_type
             project.status = "ready"
             project.error = None
             project.progress.stage = "done"
@@ -115,3 +119,12 @@ class JobRunner:
 
     def load_doc(self, project_id: str, kind: DocKind) -> DocumentResult | None:
         return self.store.load_document(project_id, kind)
+
+
+def _detect_mode(result) -> str:
+    try:
+        from .parser import detect_mode
+    except ImportError:  # older parser: questions if anything well-formed was found
+        good = [q for q in result.questions if sum(bool(o.text) for o in q.options) >= 2]
+        return "questions" if len(good) >= 3 else "text"
+    return detect_mode(result)

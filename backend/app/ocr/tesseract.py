@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from pathlib import Path
@@ -12,6 +13,10 @@ import pytesseract
 
 from app.config import Settings
 from app.models import Line, Word
+
+# Pages are OCR'd in parallel threads; Tesseract's own OpenMP threads then fight over the
+# cores and a 6 s page can take minutes. One OpenMP thread per process is far faster.
+os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 
 LOW_CONF = 60.0
 _ARABIC_RE = re.compile("[\u0600-\u06ff]")

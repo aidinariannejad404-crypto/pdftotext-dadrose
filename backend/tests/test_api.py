@@ -81,7 +81,9 @@ def test_health_and_meta(client):
 
 def test_typed_pdf_end_to_end(client):
     created = _upload(
-        client, [("booklet.pdf", fixtures_gen.booklet_pdf(), "application/pdf")], blueprint="BAR-1405"
+        client,
+        [("booklet.pdf", fixtures_gen.booklet_pdf(), "application/pdf")],
+        blueprint="BAR-1405",
     )
     project = _wait_ready(client, created["id"])
     _assert_four_questions(project)
@@ -140,7 +142,7 @@ def test_phone_photos_end_to_end(client):
 
 def test_multiple_images_become_pages(client):
     page = fixtures_gen.render(fixtures_gen.booklet_pdf(), dpi=120)
-    ok, png = cv2.imencode(".png", page)
+    _, png = cv2.imencode(".png", page)
     files = [("p1.png", png.tobytes(), "image/png"), ("p2.png", png.tobytes(), "image/png")]
     response = client.post(
         "/api/projects", files=[("booklet", f) for f in files], data={"engine": "offline"}
@@ -160,3 +162,38 @@ def test_rejects_invalid_upload(client):
 
 def test_unknown_project(client):
     assert client.get("/api/projects/doesnotexist").status_code == 404
+
+
+def test_text_mode_end_to_end(client):
+    created = _upload(
+        client,
+        [("notes.pdf", fixtures_gen.booklet_pdf(), "application/pdf")],
+        doc_type="text",
+    )
+    assert created["mode"] == "text"
+    project = _wait_ready(client, created["id"])
+    assert project["status"] == "ready" and project["mode"] == "text"
+    pid = project["id"]
+
+    view = client.get(f"/api/projects/{pid}/pages/booklet/0/text").json()
+    assert view["edited"] is False and view["approved"] is False
+    assert "حقوق" in view["text"] or len(view["text"]) > 50
+
+    edited = client.put(
+        f"/api/projects/{pid}/pages/booklet/0/text",
+        json={"text": "نکته‌ی اصلاح‌شده\nپاراگراف دوم", "approved": True},
+    ).json()
+    assert edited == {"text": "نکته‌ی اصلاح‌شده\nپاراگراف دوم", "edited": True, "approved": True}
+    assert client.get(f"/api/projects/{pid}").json()["page_status"] == {"booklet:0": True}
+
+    txt = client.get(f"/api/projects/{pid}/export.txt?only_approved=1")
+    assert txt.text.strip() == "نکته‌ی اصلاح‌شده\n\nپاراگراف دوم".replace("\n\n", "\n")
+    docx = client.get(f"/api/projects/{pid}/export-text.docx")
+    paragraphs = [p.text for p in Document(io.BytesIO(docx.content)).paragraphs]
+    assert "نکته‌ی اصلاح‌شده" in paragraphs and "پاراگراف دوم" in paragraphs
+
+    # reset the edit, then switch to question mode (runs the question parser)
+    reset = client.put(f"/api/projects/{pid}/pages/booklet/0/text", json={"text": None}).json()
+    assert reset["edited"] is False
+    switched = client.post(f"/api/projects/{pid}/mode", json={"mode": "questions"}).json()
+    assert switched["mode"] == "questions" and len(switched["questions"]) == 4

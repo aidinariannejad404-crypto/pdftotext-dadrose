@@ -15,6 +15,8 @@ from pydantic import BaseModel, Field
 BBox = tuple[float, float, float, float]
 
 DocKind = Literal["booklet", "explanations"]
+# What the admin uploaded: "auto" lets the system decide after OCR.
+DocType = Literal["auto", "questions", "text"]
 EngineName = Literal["auto", "offline", "claude", "gemini"]
 WordFlag = Literal["low_conf", "disagree"]
 
@@ -49,6 +51,9 @@ class PageResult(BaseModel):
     preprocess: list[str] = Field(default_factory=list)  # applied steps, for display
     lines: list[Line] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    # Full-text mode: the admin's corrected text of this page (None = not edited yet).
+    edited_text: str | None = None
+    approved: bool = False
 
 
 class DocumentResult(BaseModel):
@@ -94,8 +99,9 @@ class Question(BaseModel):
     stem: str = ""
     options: list[Option] = Field(default_factory=list)
     correct_key: str | None = None
-    key_source: Literal["table", "explanation", "manual"] | None = None
+    key_source: Literal["table", "explanation", "inline", "manual"] | None = None
     explanation: str = ""
+    source_ref: str = ""  # e.g. "ارشد سراسری-۷۸" printed next to the question
     regions: list[Region] = Field(default_factory=list)
     flags: list[Flag] = Field(default_factory=list)
     issues: list[Issue] = Field(default_factory=list)
@@ -129,6 +135,8 @@ class Project(BaseModel):
     track: Literal["bar", "center", "other"] = "other"
     year: int | None = None
     blueprint: str = "auto"  # blueprint code (see app.blueprints) or "auto"
+    doc_type: DocType = "auto"  # what the admin chose at upload
+    mode: Literal["questions", "text"] = "questions"  # resolved review mode
     engine: EngineName = "auto"
     created_at: datetime
     status: Literal["queued", "processing", "ready", "failed"] = "queued"
@@ -137,6 +145,13 @@ class Project(BaseModel):
     documents: list[DocInfo] = Field(default_factory=list)
     questions: list[Question] = Field(default_factory=list)
     issues: list[Issue] = Field(default_factory=list)
+    # Full-text mode progress, keyed "<doc>:<page>" → approved.
+    page_status: dict[str, bool] = Field(default_factory=dict)
+
+
+class PageTextUpdate(BaseModel):
+    text: str | None = None
+    approved: bool | None = None
 
 
 class ProjectSummary(BaseModel):
@@ -148,6 +163,8 @@ class ProjectSummary(BaseModel):
     status: str
     progress: Progress
     error: str | None
+    mode: str = "questions"
+    page_count: int = 0
     question_count: int
     approved_count: int
     error_count: int
@@ -159,6 +176,7 @@ class QuestionUpdate(BaseModel):
     options: list[Option] | None = None
     correct_key: str | None = None
     explanation: str | None = None
+    source_ref: str | None = None
     status: Literal["pending", "approved"] | None = None
     # the remaining flags after the admin accepted a word or swapped in the alternative reading
     flags: list[Flag] | None = None

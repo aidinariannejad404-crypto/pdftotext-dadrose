@@ -21,8 +21,11 @@ from .jobs import JobRunner
 from .models import (
     DocInfo,
     DocKind,
+    DocType,
+    DocumentResult,
     EngineName,
     PageResult,
+    PageTextUpdate,
     Project,
     ProjectSummary,
     Question,
@@ -112,6 +115,8 @@ def _summary(project: Project) -> ProjectSummary:
         status=project.status,
         progress=project.progress,
         error=project.error,
+        mode=project.mode,
+        page_count=sum(d.page_count for d in project.documents),
         question_count=len(project.questions),
         approved_count=sum(q.status == "approved" for q in project.questions),
         error_count=sum(any(i.level == "error" for i in q.issues) for q in project.questions),
@@ -181,6 +186,7 @@ async def create_project(
     year: Annotated[int | None, Form()] = None,
     blueprint: Annotated[str, Form()] = "auto",
     engine: Annotated[EngineName, Form()] = "auto",
+    doc_type: Annotated[DocType, Form()] = "auto",
 ):
     uploads: list[tuple[DocKind, list[UploadFile]]] = [("booklet", booklet)]
     explanation_files = [f for f in explanations or [] if f.filename]
@@ -194,6 +200,8 @@ async def create_project(
         year=year,
         blueprint=blueprint or "auto",
         engine=engine,
+        doc_type=doc_type,
+        mode="text" if doc_type == "text" else "questions",
         created_at=datetime.now(UTC),
     )
     contents = []
@@ -355,6 +363,120 @@ def reparse(project_id: str, body: ReparseBody | None = None):
         return jobs.parse(project_id, body.blueprint)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+# ------------------------------------------------------------------- text mode
+
+
+def _page_texts(project_id: str, kind: DocKind) -> tuple[DocumentResult, list[str]]:
+    doc = store.load_document(project_id, kind)
+    if doc is None:
+        raise HTTPException(404, "سند پیدا نشد.")
+    try:
+        from .parser import document_plain_text
+
+        texts = document_plain_text(doc)
+    except ImportError:
+        texts = ["\n".join(line.text for line in page.lines) for page in doc.pages]
+    return doc, texts
+
+
+def _text_view(page: PageResult, auto_text: str) -> dict:
+    edited = page.edited_text is not None
+    return {
+        "text": page.edited_text if edited else auto_text,
+        "edited": edited,
+        "approved": page.approved,
+    }
+
+
+@app.get("/api/projects/{project_id}/pages/{doc}/{page}/text")
+def page_text(project_id: str, doc: DocKind, page: int):
+    result, texts = _page_texts(project_id, doc)
+    if not 0 <= page < len(result.pages):
+        raise HTTPException(404, "صفحه پیدا نشد.")
+    return _text_view(result.pages[page], texts[page])
+
+
+@app.put("/api/projects/{project_id}/pages/{doc}/{page}/text")
+def update_page_text(project_id: str, doc: DocKind, page: int, update: PageTextUpdate):
+    with store.lock(project_id):
+        result, texts = _page_texts(project_id, doc)
+        if not 0 <= page < len(result.pages):
+            raise HTTPException(404, "صفحه پیدا نشد.")
+        target = result.pages[page]
+        changes = update.model_dump(exclude_unset=True)
+        if "text" in changes:
+            target.edited_text = update.text
+        if update.approved is not None:
+            target.approved = update.approved
+        store.save_document(project_id, result)
+        project = _load(project_id)
+        project.page_status[f"{doc}:{page}"] = target.approved
+        store.save(project)
+        return _text_view(target, texts[page])
+
+
+class ModeBody(BaseModel):
+    mode: Literal["questions", "text"]
+
+
+@app.post("/api/projects/{project_id}/mode", response_model=Project)
+def set_mode(project_id: str, body: ModeBody):
+    project = _load(project_id)
+    if project.status != "ready":
+        raise HTTPException(409, "پروژه هنوز آماده نیست.")
+    with store.lock(project_id):
+        project = _load(project_id)
+        project.doc_type = body.mode
+        project.mode = body.mode
+        store.save(project)
+    if body.mode == "questions" and not project.questions:
+        project = jobs.parse(project_id)
+    return project
+
+
+def _full_text(project: Project, only_approved: bool) -> list[tuple[str, list[str]]]:
+    """[(section title, [page texts])] for every document of the project."""
+    titles = {"booklet": "متن", "explanations": "پاسخ تشریحی"}
+    sections = []
+    for info in project.documents:
+        result, texts = _page_texts(project.id, info.kind)
+        pages = []
+        for page, auto_text in zip(result.pages, texts, strict=False):
+            if only_approved and not page.approved:
+                continue
+            pages.append(page.edited_text if page.edited_text is not None else auto_text)
+        sections.append((titles[info.kind], pages))
+    return sections
+
+
+@app.get("/api/projects/{project_id}/export.txt")
+def export_txt(project_id: str, only_approved: bool = False):
+    project = _load(project_id)
+    parts = []
+    for title, pages in _full_text(project, only_approved):
+        if len(project.documents) > 1:
+            parts.append(f"===== {title} =====")
+        parts.extend(text.strip() for text in pages if text.strip())
+    return Response(
+        "\n\n".join(parts) + "\n",
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="dadrose-{project.id}.txt"'},
+    )
+
+
+@app.get("/api/projects/{project_id}/export-text.docx")
+def export_text_docx(project_id: str, only_approved: bool = False):
+    from .export_docx import text_to_docx
+
+    project = _load(project_id)
+    data = text_to_docx(project.title, _full_text(project, only_approved))
+    return Response(
+        data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="dadrose-{project.id}-text.docx"'},
+    )
 
 
 # ---------------------------------------------------------------------- export

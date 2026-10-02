@@ -270,8 +270,35 @@ def union_bbox(boxes) -> tuple[float, float, float, float] | None:
     )
 
 
+# Hard cap on rendered pixels: a full A4 page at 300 dpi is ~8.7 MP.
+MAX_RENDER_PIXELS = 12_000_000
+
+
+def effective_dpi(page: pymupdf.Page, dpi: int) -> float:
+    """Never render above the resolution of the scan embedded in the page.
+
+    Phone scanners (iOS, CamScanner) often write the page size in pixels-as-points
+    (e.g. 1893 x 2824 pt for a 1892 x 2822 px photo); rendering that at 300 dpi
+    makes a ~90 MP upsampled image that only slows OCR down.
+    """
+    rect = page.rect
+    if rect.width <= 0 or rect.height <= 0:
+        return dpi
+    target = float(dpi)
+    images = page.get_image_info()
+    if images:
+        biggest = max(images, key=lambda i: i["width"] * i["height"])
+        x0, y0, x1, y1 = biggest["bbox"]
+        if (x1 - x0) * (y1 - y0) >= 0.5 * rect.width * rect.height and x1 > x0:
+            native = biggest["width"] / ((x1 - x0) / 72)
+            target = min(target, max(native, 72.0))
+    cap = (MAX_RENDER_PIXELS / (rect.width * rect.height)) ** 0.5 * 72
+    return max(36.0, min(target, cap))
+
+
 def render_page(page: pymupdf.Page, dpi: int) -> np.ndarray:
-    pix = page.get_pixmap(dpi=dpi, alpha=False, colorspace=pymupdf.csRGB)
+    zoom = effective_dpi(page, dpi) / 72
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False, colorspace=pymupdf.csRGB)
     img = np.frombuffer(pix.samples, np.uint8).reshape(pix.height, pix.width, pix.n)
     return cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
