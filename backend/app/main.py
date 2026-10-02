@@ -168,10 +168,20 @@ def health():
 def meta():
     from .blueprints import SUBJECTS, blueprint_list
 
-    return {
+    meta = {
         "blueprints": blueprint_list(),
         "subjects": [{"key": s["key"], "name": s["name"]} for s in SUBJECTS],
+        "topics": {},
+        "laws": [],
     }
+    try:
+        from .classify import laws_for_api, taxonomy_for_api
+
+        meta["topics"] = taxonomy_for_api()
+        meta["laws"] = laws_for_api()
+    except ImportError:  # classifier not installed yet
+        pass
+    return meta
 
 
 # -------------------------------------------------------------------- projects
@@ -264,7 +274,15 @@ def update_question(project_id: str, number: int, update: QuestionUpdate):
     with store.lock(project_id):
         project = _load(project_id)
         question = _find(project, number)
-        content_fields = {"subject_key", "stem", "options", "correct_key", "explanation"}
+        content_fields = {
+            "subject_key",
+            "stem",
+            "options",
+            "correct_key",
+            "explanation",
+            "topic",
+            "articles",
+        }
         changed = {
             key
             for key in update.model_dump(exclude_unset=True)
@@ -274,6 +292,12 @@ def update_question(project_id: str, number: int, update: QuestionUpdate):
             setattr(question, key, getattr(update, key))
         if "correct_key" in changed:
             question.key_source = "manual"
+        if "subject_key" in changed:
+            question.classification.subject_source = "manual"
+            question.classification.subject_confidence = 1.0
+        if "topic" in changed:
+            question.classification.topic_source = "manual"
+            question.classification.topic_confidence = 1.0
         if content_fields & changed:
             question.edited = True
         _revalidate(project)
@@ -365,6 +389,52 @@ def reocr_question(project_id: str, number: int, body: ReocrBody | None = None):
         _revalidate(project)
         store.save(project)
         return question
+
+
+class ClassifyBody(BaseModel):
+    engine: Literal["rules", "auto", "claude", "gemini"] = "rules"
+    numbers: list[int] | None = None
+
+
+@app.post("/api/projects/{project_id}/classify", response_model=Project)
+def classify(project_id: str, body: ClassifyBody | None = None):
+    from .classify import classify_project
+
+    body = body or ClassifyBody()
+    project = _load(project_id)
+    if project.status != "ready":
+        raise HTTPException(409, "پروژه هنوز آماده نیست.")
+    wanted = set(body.numbers) if body.numbers else None
+    targets = [q for q in project.questions if wanted is None or q.number in wanted]
+    engine = body.engine
+    if engine == "auto":
+        from .ocr.llm import engine_status
+
+        status = engine_status(settings)
+        engine = settings.default_ai_engine if status.get(settings.default_ai_engine) else "rules"
+    classify_project(targets, blueprint=project.blueprint, default_subject=project.default_subject)
+    if engine in ("claude", "gemini"):
+        from .ai_classify import classify_with_ai
+        from .ocr.llm import AiEngineError
+
+        try:
+            classify_with_ai(targets, engine, settings)
+        except AiEngineError as exc:
+            raise HTTPException(502, str(exc)) from exc
+    with store.lock(project_id):
+        fresh = _load(project_id)
+        by_number = {q.number: q for q in targets}
+        for index, question in enumerate(fresh.questions):
+            done = by_number.get(question.number)
+            if done is not None:
+                question.subject_key = done.subject_key
+                question.topic = done.topic
+                question.articles = done.articles
+                question.classification = done.classification
+                fresh.questions[index] = question
+        _revalidate(fresh)
+        store.save(fresh)
+        return fresh
 
 
 class ReparseBody(BaseModel):

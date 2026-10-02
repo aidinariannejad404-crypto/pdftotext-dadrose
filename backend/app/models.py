@@ -88,6 +88,29 @@ class Issue(BaseModel):
     field: str | None = None
 
 
+ClassSource = Literal["text", "heading", "blueprint", "rules", "ai", "manual", "default"]
+
+
+class ArticleRef(BaseModel):
+    """A law article a question is about, e.g. «بند ۳ ماده‌ی ۲ قانون تجارت»."""
+
+    law_key: str | None = None  # stable key from data/laws.json, e.g. "commercial_code"
+    law: str = ""  # display name, e.g. "قانون تجارت"
+    kind: Literal["ماده", "اصل"] = "ماده"
+    number: str = ""  # "۲", "۱۰ مکرر"
+    clause: str = ""  # "بند ۳" / "تبصره ۱"
+    source: ClassSource = "text"
+    field: str | None = None  # where it was found: stem | option:N | explanation
+
+
+class Classification(BaseModel):
+    subject_source: ClassSource | None = None
+    subject_confidence: float | None = None  # 0..1
+    topic_source: ClassSource | None = None
+    topic_confidence: float | None = None
+    section_path: list[str] = Field(default_factory=list)  # book headings above the question
+
+
 class Option(BaseModel):
     key: str  # "1".."4"
     text: str = ""
@@ -102,6 +125,9 @@ class Question(BaseModel):
     key_source: Literal["table", "explanation", "inline", "manual"] | None = None
     explanation: str = ""
     source_ref: str = ""  # e.g. "ارشد سراسری-۷۸" printed next to the question
+    topic: str = ""  # مبحث, e.g. "تاجر و اعمال تجارتی"
+    articles: list[ArticleRef] = Field(default_factory=list)
+    classification: Classification = Field(default_factory=Classification)
     regions: list[Region] = Field(default_factory=list)
     flags: list[Flag] = Field(default_factory=list)
     issues: list[Issue] = Field(default_factory=list)
@@ -179,6 +205,8 @@ class QuestionUpdate(BaseModel):
     correct_key: str | None = None
     explanation: str | None = None
     source_ref: str | None = None
+    topic: str | None = None
+    articles: list[ArticleRef] | None = None
     status: Literal["pending", "approved"] | None = None
     # the remaining flags after the admin accepted a word or swapped in the alternative reading
     flags: list[Flag] | None = None

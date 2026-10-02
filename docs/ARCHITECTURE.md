@@ -45,6 +45,10 @@ All shapes are in `app/models.py`. BBoxes are normalized `[x0,y0,x1,y1]` on the
 | `parser.py` | `build_questions(booklet, explanations, blueprint) -> ParseResult`; `parse_single_question(lines, doc_kind) -> Question or None` | parser agent |
 | `validate.py` | `validate_question(q, has_explanations) -> list[Issue]`; `validate_project(questions, has_explanations, expected_count) -> list[Issue]` | parser agent |
 | `export.py` | `to_dadrose_payload(project, only_approved) -> dict`; `push_to_dadrose(payload, settings) -> dict` | parser agent |
+| `export_docx.py` | DOCX in the site's «ورود هوشمند از ورد» template; full-text DOCX | orchestrator |
+| `uploads.py` | PDFs/photos → one PDF | orchestrator |
+| `ocr/flags.py` | document-level suspicious-word refinement (lexicon + shape) | orchestrator |
+| `classify.py`, `ai_classify.py`, `data/laws.json`, `data/taxonomy.json` | subject / topic / law-article classification (rules + optional AI) | parser agent |
 | `store.py`, `jobs.py`, `main.py` | persistence, background jobs, HTTP API | orchestrator |
 
 ## HTTP API (consumed by the frontend)
@@ -65,6 +69,11 @@ All JSON. Errors: `{"detail": "<Persian message>"}`. Auth: HTTP Basic when `ADMI
 | POST | `/api/projects/{id}/questions` | `{number}` | `Question` (new empty question) |
 | DELETE | `/api/projects/{id}/questions/{number}` | — | `{ok: true}` |
 | POST | `/api/projects/{id}/questions/{number}/reocr` | `{engine}` | `Question` (re-read from its regions with the given engine; edits replaced) |
+| POST | `/api/projects/{id}/classify` | `{engine: rules/auto/claude/gemini, numbers?}` | `Project` (subject/topic/articles; manual fields kept) |
+| GET | `/api/projects/{id}/pages/{doc}/{page}/text` | — | `{text, edited, approved}` (full-text mode) |
+| PUT | `/api/projects/{id}/pages/{doc}/{page}/text` | `{text?, approved?}` | same |
+| POST | `/api/projects/{id}/mode` | `{mode: questions/text}` | `Project` |
+| GET | `/api/projects/{id}/export.docx` · `export-text.docx` · `export.txt` | `?only_approved=1` | file |
 | POST | `/api/projects/{id}/reparse` | `{blueprint?}` | `Project` (re-run parser on stored OCR; keeps nothing manual) |
 | GET | `/api/projects/{id}/export.json` | `?only_approved=1` | DADROSE payload (download) |
 | POST | `/api/projects/{id}/push` | `{only_approved: bool}` | `{ok, response}` |
