@@ -557,4 +557,21 @@ test('duplicates: box with link to the other project, dismiss locally', async ({
   await expect(page.getByTestId('dup-link')).toHaveAttribute('href', '#/p/b-1?q=11');
   await page.getByTestId('dup-dismiss').click();
   await expect(box).toHaveCount(0);
+  await expect(page.getByText('علامت تکراری برداشته شد.')).toBeVisible();
+  const p = await (await page.request.get('/api/projects/demo')).json();
+  const q11 = p.questions.find((q: { number: number }) => q.number === 11);
+  expect(q11.duplicates).toHaveLength(0);
+  expect(q11.issues.some((i: { code: string }) => i.code === 'duplicate')).toBe(false);
+  await page.reload();
+  await expect(page.getByTestId('dup-box')).toHaveCount(0);
+});
+
+test('bulk Word download is one ZIP; nothing approved → Persian error', async ({ page }) => {
+  await page.goto('/#/');
+  await page.getByRole('checkbox', { name: 'انتخاب کتاب تست تجارت - فصل ۱' }).check();
+  await page.getByTestId('bulk-word').click();
+  await expect(page.getByText('در پروژه‌های انتخاب‌شده سؤال تأییدشده‌ای برای خروجی نیست.')).toBeVisible();
+  await page.getByRole('checkbox', { name: 'انتخاب آزمون کانون وکلا ۱۴۰۳' }).check();
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByTestId('bulk-word').click()]);
+  expect(dl.suggestedFilename()).toMatch(/\.zip$/);
 });

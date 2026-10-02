@@ -42,7 +42,7 @@ Playwright uses the pre-installed Chromium (`PLAYWRIGHT_BROWSERS_PATH`); `@playw
 ## High volume
 
 - Upload «بارگذاری گروهی: هر فایل یک پروژه‌ی جدا» → `POST /api/projects/batch` (`files` + `titles` repeated, common fields, `auto_approve`); stays on the list and highlights the batch. «تأیید خودکار سؤال‌های سالم» sends `auto_approve`.
-- Projects list grouped by `batch_id` (collapsible), queue position chips, «خودکار تأییدشده» / «تکراری» counts, `stats` line; bulk bar: «تأیید خودکار سالم‌ها» (`POST /auto-approve` per project), «دانلود Word همه», «ارسال تأییدشده‌ها به سایت» (`POST /api/push-approved`).
+- Projects list grouped by `batch_id` (collapsible), queue position chips, «خودکار تأییدشده» / «تکراری» counts, `stats` line; bulk bar: «تأیید خودکار سالم‌ها» (`POST /auto-approve` per project), «دانلود Word همه (ZIP)» (`GET /api/export.zip`), «ارسال تأییدشده‌ها به سایت» (`POST /api/push-approved`).
 - «صف بازبینی» (`#/queue`, `GET /api/review-queue`): opens questions with `&from=queue`; «تأیید و بعدی» / «بعدی در صف» continue across projects.
 - Review: «تأیید همه‌ی سالم‌ها», «خودکار» badges, duplicates box, «ورود سریع کلید» (`PUT /keys`, preview grid).
 
@@ -52,11 +52,11 @@ Playwright uses the pre-installed Chromium (`PLAYWRIGHT_BROWSERS_PATH`); `@playw
 
 ```bash
 npm run build
-(cd ../backend && uv run uvicorn app.main:app)      # serves UI + API on http://127.0.0.1:8000
+(cd ../backend && DATA_DIR=$(mktemp -d) TESSDATA_DIR=/opt/tessdata_best uv run uvicorn app.main:app)  # http://127.0.0.1:8000
 npm run test:real                                   # REAL_BASE_URL=http://host:port to override
 ```
 
-Flow: upload as «دفترچه‌ی آزمون رسمی» (کانون/۱۴۰۴) → auto-navigates → waits for ready (≤120 s) → 4 questions → edit stem, resolve a flag, approve → reload persists → download Word (.docx) → switch to full-text mode → edit + approve a page → download TXT; then the phone photo as «متن کامل» on a 390px viewport. Any console error, page error or HTTP 4xx/5xx fails the test. Uses `/opt/pw-browsers/chromium` (override with `PW_CHROMIUM`).
+Flow: upload as «دفترچه‌ی آزمون رسمی» (کانون/۱۴۰۴) → auto-navigates → waits for ready (≤120 s) → 4 questions → edit stem, resolve a flag, approve → reload persists → download Word (.docx) → switch to full-text mode → edit + approve a page → download TXT; then the phone photo as «متن کامل» on a 390px viewport; then a batch of two generated PDFs with auto-approve → review queue → quick key entry → approve-all-clean → ZIP download. Any console error, page error or HTTP 4xx/5xx fails the test. Uses `/opt/pw-browsers/chromium` (override with `PW_CHROMIUM`).
 
 ## Mock (`mock/`)
 

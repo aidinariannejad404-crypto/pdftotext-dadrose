@@ -88,7 +88,7 @@ function withDemoExtras(p: MockProject): MockProject {
   const q11 = p.questions.find((q) => q.number === 11);
   if (q11) {
     q11.duplicates = [{ project_id: 'b-1', project_title: 'کتاب تست تجارت - فصل ۱', number: 11, similarity: 0.97 }];
-    q11.issues = [...q11.issues, { level: 'warning', code: 'duplicate', message: 'این سؤال تکراری به نظر می‌رسد.', field: null }];
+    q11.issues = validateQuestion(q11, true);
   }
   return p;
 }
@@ -272,6 +272,23 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
     const rank = { error: 0, warning: 1, pending: 2 };
     items.sort((a, b) => rank[a.level] - rank[b.level]);
     return send(res, 200, items.slice(0, limit)), true;
+  }
+
+  if (path === '/api/export.zip' && method === 'GET') {
+    const ids = (url.searchParams.get('project_ids') ?? '').split(',').filter(Boolean);
+    const only = url.searchParams.get('only_approved') === '1';
+    const list = projects.filter(
+      (x) =>
+        ids.includes(x.id) &&
+        x.status === 'ready' &&
+        (x.mode === 'text' ? true : x.questions.some((q) => !only || q.status === 'approved')),
+    );
+    if (!list.length) return send(res, 400, { detail: 'در پروژه‌های انتخاب‌شده سؤال تأییدشده‌ای برای خروجی نیست.' }), true;
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="dadrose-export.zip"');
+    res.end(Buffer.from(`PK\u0003\u0004 mock zip: ${list.map((x) => x.id).join(',')}`));
+    return true;
   }
 
   if (path === '/api/push-approved' && method === 'POST') {
@@ -471,6 +488,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
         cls.subject_confidence = 1;
       }
       if (upd.articles != null) q.articles = upd.articles;
+      if (upd.duplicates != null) q.duplicates = upd.duplicates;
       if (upd.subject_key !== undefined && upd.subject_key !== null) q.subject_key = upd.subject_key;
       if (upd.correct_key != null && upd.correct_key !== q.correct_key) {
         q.correct_key = upd.correct_key;

@@ -465,6 +465,7 @@ export function validateQuestion(q: Question, hasExplanations: boolean): Issue[]
   if (hasExplanations && !q.explanation.trim()) {
     issues.push({ level: 'warning', code: 'missing_explanation', message: 'پاسخ تشریحی پیدا نشد.', field: 'explanation' });
   }
+  if ((q.duplicates ?? []).length) issues.push({ level: 'warning', code: 'duplicate', message: 'این سؤال تکراری به نظر می‌رسد.', field: null });
   if (q.flags.length) issues.push({ level: 'warning', code: 'suspicious_words', message: `${fa(q.flags.length)} کلمه مشکوک`, field: null });
   if (!q.subject_key) issues.push({ level: 'warning', code: 'missing_subject', message: 'درس سؤال مشخص نیست.', field: null });
   return issues;

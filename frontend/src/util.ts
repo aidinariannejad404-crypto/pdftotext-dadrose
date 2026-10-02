@@ -351,6 +351,15 @@ export const ISSUE_CODE_LABELS: Record<string, string> = {
   missing_subject: 'بدون درس',
   duplicate: 'تکراری',
   duplicate_question: 'تکراری',
+  missing_topic: 'بدون مبحث',
+  article_unknown_law: 'قانون ناشناخته',
+  missing_numbers: 'شماره‌های جاافتاده',
+  duplicate_numbers: 'شماره‌ی تکراری',
+  count_mismatch: 'تعداد سؤال‌ها',
+  key_table_missing: 'جدول کلید پیدا نشد',
+  key_table_partial: 'جدول کلید ناقص',
+  explanations_unmatched: 'پاسخ تشریحی بی‌سؤال',
+  orphan_explanation: 'پاسخ تشریحی بی‌سؤال',
 };
 
 const LETTER_KEYS: Record<string, string> = { الف: '1', ب: '2', ج: '3', د: '4' };
