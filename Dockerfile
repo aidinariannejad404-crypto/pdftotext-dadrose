@@ -17,7 +17,7 @@ RUN mkdir -p /opt/tessdata_best \
       curl -fsSL -o /opt/tessdata_best/$l.traineddata https://raw.githubusercontent.com/tesseract-ocr/tessdata_best/main/$l.traineddata \
       || cp /usr/share/tesseract-ocr/5/tessdata/$l.traineddata /opt/tessdata_best/; \
     done
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+RUN pip install --no-cache-dir uv  # from PyPI: ghcr.io is often unreachable (e.g. from Iran)
 WORKDIR /app/backend
 COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --frozen --no-dev
