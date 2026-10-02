@@ -73,7 +73,7 @@ export default function Navigator({ questions, current, onSelect, filter, onFilt
     <nav className="navigator" aria-label="فهرست سؤال‌ها">
       <div className="nav-progress">
         <div className="nav-progress-head">
-          <span>پیشرفت بازبینی</span>
+          <span>تأییدشده</span>
           <span className="nav-progress-num">
             {fa(approved)} / {fa(questions.length)}
           </span>
@@ -147,7 +147,8 @@ export default function Navigator({ questions, current, onSelect, filter, onFilt
       <div className="nav-legend small muted" aria-hidden="true">
         <span><i className="dot dot-approved" /> تأییدشده</span>
         <span><i className="dot dot-error" /> خطا</span>
-        <span><i className="dot dot-warning" /> هشدار</span>
+        <span><i className="dot dot-warning" /> نیاز به بررسی</span>
+        <span><i className="dot dot-neutral" /> تأییدنشده</span>
       </div>
 
       <button className="btn btn-sm btn-ghost nav-add" onClick={onAdd}>

@@ -16,17 +16,58 @@ test('projects page lists projects and opens review', async ({ page }) => {
   await expect(page.getByTestId('current-number')).toHaveText('۲');
 });
 
-test('upload creates a project that finishes processing', async ({ page }) => {
+test('simplified upload: explains what is missing, auto-fills title and blueprint, accepts several images', async ({ page }) => {
   await page.goto('/#/');
+  // aria-disabled (not disabled) so clicking still explains what is missing
+  await page.getByTestId('submit-upload').click({ force: true });
+  await expect(page.getByTestId('submit-reason')).toContainText('فایل دفترچه را انتخاب کنید');
+  await expect(page.getByTestId('submit-reason')).toContainText('سال آزمون را وارد کنید');
+
+  // several page photos + a PDF, in page order
+  await page.locator('#drop-booklet-input').setInputFiles([
+    { name: 'page-1.jpg', mimeType: 'image/jpeg', buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
+    { name: 'page-2.png', mimeType: 'image/png', buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]) },
+  ]);
   await page.locator('#drop-booklet-input').setInputFiles({
-    name: 'booklet.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 mock'),
+    name: 'rest.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 /Type /Page /Type /Page'),
   });
-  await page.getByLabel('عنوان', { exact: true }).fill('آزمون آزمایشی');
-  await page.getByRole('button', { name: 'شروع پردازش' }).click();
-  await expect(page.getByText('فایل‌ها بارگذاری شد؛ پردازش آغاز شد.')).toBeVisible();
-  const row = page.getByTestId('project-row').filter({ hasText: 'آزمون آزمایشی' });
+  const rows = page.getByTestId('drop-booklet').getByTestId('file-row');
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(2)).toContainText('۲ صفحه');
+  // reorder: move the PDF up one place
+  await rows.nth(2).getByRole('button', { name: /انتقال rest.pdf به بالا/ }).click();
+  await expect(rows.nth(1)).toContainText('rest.pdf');
+  // remove one
+  await rows.nth(0).getByRole('button', { name: /حذف page-1.jpg/ }).click();
+  await expect(rows).toHaveCount(2);
+
+  await page.getByRole('radio', { name: 'مرکز وکلا' }).click();
+  await page.locator('#up-year').fill('1404');
+  await expect(page.getByTestId('title-input')).toHaveValue('آزمون مرکز وکلا ۱۴۰۴');
+  await page.locator('summary', { hasText: 'تنظیمات پیشرفته' }).click();
+  await expect(page.getByTestId('blueprint-select')).toHaveValue('CENTER-1404');
+  await page.locator('#up-year').fill('1399');
+  await expect(page.getByTestId('blueprint-select')).toHaveValue('CENTER-1405'); // latest center
+  await page.getByRole('radio', { name: 'کانون وکلا' }).click();
+  await expect(page.getByTestId('blueprint-select')).toHaveValue('BAR-1405');
+  await page.locator('#up-year').fill('1404');
+
+  await expect(page.getByTestId('submit-reason')).toHaveCount(0);
+  await page.getByTestId('submit-upload').click();
+  await expect(page.getByText(/پردازش شروع شد/)).toBeVisible();
+  const row = page.getByTestId('project-row').filter({ hasText: 'آزمون کانون وکلا ۱۴۰۴' });
   await expect(row).toBeVisible();
   await expect(row.getByText('آماده‌ی بازبینی')).toBeVisible({ timeout: 15_000 });
+});
+
+test('guide can be dismissed and is remembered', async ({ page }) => {
+  await page.goto('/#/');
+  await expect(page.getByTestId('guide')).toBeVisible();
+  await page.getByRole('button', { name: 'بستن راهنما' }).click();
+  await expect(page.getByTestId('guide')).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByTestId('project-row').first()).toBeVisible();
+  await expect(page.getByTestId('guide')).toHaveCount(0);
 });
 
 test('select question, see flags, edit with inline highlight and autosave', async ({ page }) => {
@@ -38,7 +79,7 @@ test('select question, see flags, edit with inline highlight and autosave', asyn
   await expect(stemField.locator('mark.hl-disagree')).toHaveText('مستاجر');
 
   // clicking the chip selects that word in the textarea and marks its bbox on the page
-  await page.getByTestId('flag-chip').first().click();
+  await page.getByTestId('flag-chip').first().locator('.flag-word').click();
   const selected = await page.evaluate(() => {
     const el = document.activeElement as HTMLTextAreaElement;
     return el.value.slice(el.selectionStart, el.selectionEnd);
@@ -87,12 +128,76 @@ test('approve moves to next unapproved question and updates counts', async ({ pa
   await expect(page.getByTestId('count-approved')).toHaveText('۴');
 });
 
-test('setting the key fixes a missing-key error', async ({ page }) => {
+test('missing key issue is actionable and fixed by choosing the key', async ({ page }) => {
   await page.goto('/#/p/demo?q=4');
   await expect(page.getByTestId('qchip-4')).toHaveAttribute('data-state', 'error');
+  await page.getByRole('button', { name: /گزینه‌ی درست مشخص نیست/ }).click();
+  await expect(page.locator('[data-key-radio="1"]')).toBeFocused();
   await page.getByTestId('option-2').getByRole('radio').check();
-  await expect(page.getByText('کلید: گزینه‌ی ۲ — دستی')).toBeVisible();
+  await expect(page.getByText('پاسخ درست: گزینه‌ی ۲ (دستی)')).toBeVisible();
   await expect(page.getByTestId('qchip-4')).not.toHaveAttribute('data-state', 'error');
+});
+
+test('suspicious words: use the alternative reading or keep the current one', async ({ page }) => {
+  await page.goto('/#/p/demo?q=2');
+  const cards = page.getByTestId('flag-chip');
+  await expect(cards).toHaveCount(2);
+  await expect(cards.first()).toContainText('«مستاجر» یا «مستأجر»؟');
+  // hovering highlights the box on the page image
+  await cards.first().hover();
+  await expect(page.locator('[data-testid="ov-flag"].is-hover')).toBeVisible();
+  await cards.first().getByTestId('flag-use-alt').click();
+  await expect(page.locator('textarea[data-field="stem"]')).toHaveValue(/^مستأجر بدون اذن/);
+  await expect(cards).toHaveCount(1);
+  // low-confidence word: just confirm it
+  await cards.first().getByTestId('flag-keep').click();
+  await expect(page.getByTestId('flag-chip')).toHaveCount(0);
+  await expect(page.getByTestId('save-state')).toHaveText(/ذخیره شد/, { timeout: 5000 });
+  const project = await (await page.request.get('/api/projects/demo')).json();
+  const q2 = project.questions.find((q: { number: number }) => q.number === 2);
+  expect(q2.flags).toHaveLength(0);
+  expect(q2.stem.startsWith('مستأجر')).toBe(true);
+});
+
+test('next problem jumps to errors first, with F8 too', async ({ page }) => {
+  await page.goto('/#/p/demo?q=2');
+  await expect(page.getByTestId('next-problem').first()).toContainText('خطای بعدی');
+  await page.getByTestId('next-problem').first().click();
+  await expect(page.getByTestId('current-number')).toHaveText('۴');
+  await page.keyboard.press('F8');
+  await expect(page.getByTestId('current-number')).toHaveText('۶');
+});
+
+test('completion card appears when everything is approved', async ({ page }) => {
+  const project = await (await page.request.get('/api/projects/demo')).json();
+  for (const q of project.questions) {
+    if (q.number !== 11) await page.request.put(`/api/projects/demo/questions/${q.number}`, { data: { status: 'approved' } });
+  }
+  await page.goto('/#/p/demo?q=11');
+  await expect(page.getByTestId('done-card')).toHaveCount(0);
+  await page.getByTestId('approve').click();
+  await expect(page.getByTestId('done-card')).toBeVisible();
+  await expect(page.getByTestId('done-card').getByTestId('download-word')).toHaveAttribute('href', /export\.docx\?only_approved=1/);
+  await expect(page.getByTestId('count-approved')).toHaveText('۱۰');
+});
+
+test('help dialog opens with ? and lists shortcuts', async ({ page }) => {
+  await page.goto('/#/p/demo?q=2');
+  await page.getByTestId('current-number').waitFor();
+  await page.locator('body').click({ position: { x: 5, y: 300 } });
+  await page.keyboard.press('?');
+  await expect(page.getByRole('dialog', { name: 'راهنمای بازبینی' })).toBeVisible();
+  await expect(page.getByRole('dialog')).toContainText('F8');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('delete question asks for confirmation', async ({ page }) => {
+  await page.goto('/#/p/demo?q=3');
+  await page.getByRole('button', { name: 'حذف', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'حذف سؤال ۳' })).toBeVisible();
+  await page.getByTestId('confirm-delete').click();
+  await expect(page.getByTestId('qchip-3')).toHaveCount(0);
 });
 
 test('page viewer shows OCR tooltip on hover', async ({ page }) => {
@@ -104,9 +209,15 @@ test('page viewer shows OCR tooltip on hover', async ({ page }) => {
   await expect(page.getByTestId('word-tip')).toContainText('اطمینان');
 });
 
-test('push shows result', async ({ page }) => {
+test('Word download is the primary export; push is disabled when not configured', async ({ page }) => {
   await page.goto('/#/p/demo');
-  await page.getByRole('button', { name: 'ارسال به سایت' }).click();
-  await page.getByRole('button', { name: /ارسال ۲ سؤال/ }).click();
-  await expect(page.getByTestId('push-result')).toContainText('created');
+  const word = page.locator('.review-header').getByTestId('download-word');
+  await expect(word).toHaveAttribute('href', '/api/projects/demo/export.docx?only_approved=1');
+  await expect(word).toContainText('۲ سؤال');
+  const res = await page.request.get('/api/projects/demo/export.docx');
+  expect(res.headers()['content-type']).toContain('wordprocessingml');
+  await page.getByTestId('more-menu').click();
+  await expect(page.getByTestId('menu-push')).toHaveAttribute('aria-disabled', 'true');
+  await expect(page.getByTestId('menu-push')).toContainText('پیکربندی نشده');
+  await expect(page.getByTestId('menu-json')).toHaveAttribute('href', /export\.json/);
 });

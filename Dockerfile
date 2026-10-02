@@ -23,7 +23,7 @@ COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --frozen --no-dev
 COPY backend/ ./
 COPY --from=ui /ui/dist /app/frontend/dist
-ENV TESSDATA_DIR=/opt/tessdata_best DATA_DIR=/data PATH="/app/backend/.venv/bin:$PATH"
+ENV TESSDATA_DIR=/opt/tessdata_best DATA_DIR=/data OMP_THREAD_LIMIT=1 PATH="/app/backend/.venv/bin:$PATH"
 VOLUME /data
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

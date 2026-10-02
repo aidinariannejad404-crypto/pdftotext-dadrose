@@ -2,14 +2,19 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState, type
 import { ApiError } from '../api';
 
 type Kind = 'success' | 'error' | 'info';
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
 interface Toast {
   id: number;
   kind: Kind;
   text: string;
+  action?: ToastAction;
 }
 interface ToastApi {
   success: (text: string) => void;
-  error: (errOrText: unknown) => void;
+  error: (errOrText: unknown, action?: ToastAction) => void;
   info: (text: string) => void;
 }
 
@@ -28,10 +33,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const remove = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
   const push = useCallback(
-    (kind: Kind, text: string) => {
+    (kind: Kind, text: string, action?: ToastAction) => {
       const id = ++seq.current;
-      setToasts((t) => [...t.slice(-3), { id, kind, text }]);
-      setTimeout(() => remove(id), kind === 'error' ? 7000 : 3500);
+      setToasts((t) => [...t.slice(-3), { id, kind, text, action }]);
+      setTimeout(() => remove(id), kind === 'error' ? (action ? 12000 : 7000) : 3500);
     },
     [remove],
   );
@@ -40,7 +45,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     () => ({
       success: (t) => push('success', t),
       info: (t) => push('info', t),
-      error: (e) => push('error', errorMessage(e)),
+      error: (e, action) => push('error', errorMessage(e), action),
     }),
     [push],
   );
@@ -52,6 +57,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {toasts.map((t) => (
           <div key={t.id} className={`toast toast-${t.kind}`} role={t.kind === 'error' ? 'alert' : 'status'}>
             <span className="toast-text">{t.text}</span>
+            {t.action && (
+              <button
+                className="toast-action"
+                onClick={() => {
+                  remove(t.id);
+                  t.action!.onClick();
+                }}
+              >
+                {t.action.label}
+              </button>
+            )}
             <button className="toast-close" onClick={() => remove(t.id)} aria-label="بستن">
               ×
             </button>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
-import type { Option, Question, QuestionUpdate } from './types';
+import type { Flag, Option, Question, QuestionUpdate } from './types';
 
 export type SaveState = 'saved' | 'dirty' | 'saving' | 'error';
 
@@ -10,6 +10,7 @@ export interface Draft {
   options: Option[];
   correct_key: string | null;
   explanation: string;
+  flags: Flag[]; // remaining suspicious words (resolved ones are removed locally, then PUT)
 }
 
 const KEYS = ['1', '2', '3', '4'];
@@ -23,17 +24,20 @@ export function draftFrom(q: Question): Draft {
     options: [...KEYS.map((key) => ({ key, text: byKey.get(key) ?? '' })), ...extra],
     correct_key: q.correct_key,
     explanation: q.explanation,
+    flags: q.flags,
   };
 }
 
-function toUpdate(d: Draft): QuestionUpdate {
-  return {
+function toUpdate(d: Draft, withFlags: boolean): QuestionUpdate {
+  const u: QuestionUpdate = {
     subject_key: d.subject_key,
     stem: d.stem,
     options: d.options,
     correct_key: d.correct_key,
     explanation: d.explanation,
   };
+  if (withFlags) u.flags = d.flags;
+  return u;
 }
 
 const DEBOUNCE_MS = 800;
@@ -58,6 +62,7 @@ export function useDraft(
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inflight = useRef<Promise<boolean> | null>(null);
   const dirty = useRef(false);
+  const flagsDirty = useRef(false);
   const savedCb = useRef(onSaved);
   const errorCb = useRef(onError);
   savedCb.current = onSaved;
@@ -70,6 +75,7 @@ export function useDraft(
     draftRef.current = d;
     numberRef.current = question?.number ?? null;
     dirty.current = false;
+    flagsDirty.current = false;
     setDraftState(d);
     setState('saved');
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -84,12 +90,14 @@ export function useDraft(
       if (!d || n === null) return false;
       if (!dirty.current && !extra) return true;
       const seqAtSend = editSeq.current;
+      const sendFlags = flagsDirty.current;
       setState('saving');
       const p = (async () => {
         try {
-          const q = await api.updateQuestion(projectId, n, { ...toUpdate(d), ...extra });
+          const q = await api.updateQuestion(projectId, n, { ...toUpdate(d, sendFlags), ...extra });
           if (numberRef.current === n && editSeq.current === seqAtSend) {
             dirty.current = false;
+            flagsDirty.current = false;
             setState('saved');
           } else if (numberRef.current === n) {
             setState('dirty');
@@ -115,6 +123,7 @@ export function useDraft(
       const cur = draftRef.current;
       if (!cur) return;
       const next = { ...cur, ...patch };
+      if (patch.flags) flagsDirty.current = true;
       draftRef.current = next;
       editSeq.current += 1;
       dirty.current = true;

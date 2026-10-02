@@ -172,3 +172,102 @@ export function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: numb
 export function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(' ');
 }
+
+// ------------------------------------------------------------ issue helpers
+
+/** Where an issue should be fixed: a field name, 'key' (radio group), 'subject', 'flags' or null. */
+export function issueTarget(issue: Issue, q: Pick<Question, 'options'>): string | null {
+  switch (issue.code) {
+    case 'missing_key':
+    case 'invalid_key':
+      return 'key';
+    case 'key_mismatch':
+      return 'key';
+    case 'missing_subject':
+      return 'subject';
+    case 'suspicious_words':
+      return 'flags';
+    case 'empty_stem':
+      return 'stem';
+    case 'missing_explanation':
+      return 'explanation';
+    case 'option_count': {
+      const empty = ['1', '2', '3', '4'].find((k) => !q.options.find((o) => o.key === k)?.text.trim());
+      return empty ? `option:${empty}` : 'key';
+    }
+    default:
+      if (issue.field === 'correct_key') return 'key';
+      if (issue.field === 'subject_key') return 'subject';
+      return issue.field ?? null;
+  }
+}
+
+/** A friendly, actionable sentence for an issue (falls back to the server message). */
+export function issueAction(issue: Issue): string {
+  const opt = /^option:(\d)$/.exec(issue.field ?? '');
+  switch (issue.code) {
+    case 'missing_key':
+      return 'گزینه‌ی درست مشخص نیست — روی دایره‌ی کنار گزینه‌ی درست بزنید.';
+    case 'invalid_key':
+      return 'کلید با گزینه‌ها جور نیست — گزینه‌ی درست را دوباره انتخاب کنید.';
+    case 'key_mismatch':
+      return `${issue.message} گزینه‌ی درست را بررسی و انتخاب کنید.`;
+    case 'empty_option':
+      return opt ? `متن گزینه‌ی ${fa(opt[1])} خالی است — آن را از روی تصویر وارد کنید.` : issue.message;
+    case 'empty_stem':
+      return 'صورت سؤال خالی است — آن را از روی تصویر وارد کنید.';
+    case 'option_count':
+      return `${issue.message} گزینه‌ی جاافتاده را از روی تصویر وارد کنید.`;
+    case 'missing_subject':
+      return 'درس این سؤال مشخص نیست — از فهرست بالا انتخاب کنید.';
+    case 'missing_explanation':
+      return 'پاسخ تشریحی پیدا نشد — در صورت نیاز از روی تصویر وارد کنید (اختیاری).';
+    case 'suspicious_words':
+      return `${issue.message} — هر کدام را پایین‌تر تأیید یا اصلاح کنید.`;
+    default:
+      return issue.message;
+  }
+}
+
+export function setFieldText<T extends { stem: string; explanation: string; options: { key: string; text: string }[] }>(
+  d: T,
+  field: string,
+  text: string,
+): Partial<T> {
+  if (field === 'stem') return { stem: text } as Partial<T>;
+  if (field === 'explanation') return { explanation: text } as Partial<T>;
+  const m = /^option:(\d)$/.exec(field);
+  if (m) return { options: d.options.map((o) => (o.key === m[1] ? { ...o, text } : o)) } as Partial<T>;
+  return {};
+}
+
+/** Rough processing-time estimate for the remaining pages (5–15 s per page). */
+export function etaText(pages: number): string {
+  if (pages <= 0) return 'چند لحظه';
+  const lo = Math.ceil((pages * 5) / 60);
+  const hi = Math.ceil((pages * 15) / 60);
+  if (hi <= 1) return 'کمتر از یک دقیقه';
+  if (lo === hi) return `حدود ${fa(hi)} دقیقه`;
+  return `حدود ${fa(lo)} تا ${fa(hi)} دقیقه`;
+}
+
+export function storageGet(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+export function storageSet(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    /* private mode etc. */
+  }
+}
+
+export function isTypingTarget(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false;
+  return el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
+}

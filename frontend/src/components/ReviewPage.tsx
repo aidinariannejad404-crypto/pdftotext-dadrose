@@ -3,12 +3,15 @@ import { api, exportUrl } from '../api';
 import { useAppData } from '../appData';
 import { clearPageCache } from '../pageCache';
 import type { DocKind, EngineName, Flag, Line, Project, Question, Word } from '../types';
-import { useDraft } from '../useDraft';
+import { useDraft, type Draft } from '../useDraft';
 import {
-  ENGINE_LABELS, STAGE_LABELS, TRACK_LABELS, computeMarks, cx, fa, getFieldText, percent, questionState, toAsciiDigits,
+  ENGINE_LABELS, STAGE_LABELS, computeMarks, cx, etaText, fa, getFieldText, isTypingTarget, percent,
+  questionState, setFieldText, toAsciiDigits,
 } from '../util';
-import Editor from './Editor';
+import Editor, { NextProblemButton, type NextProblem } from './Editor';
+import HelpDialog from './HelpDialog';
 import { BrandMark, Icon } from './Icons';
+import Menu from './Menu';
 import Modal from './Modal';
 import Navigator, { type NavFilter } from './Navigator';
 import PageViewer, { type FocusTarget } from './PageViewer';
@@ -22,6 +25,7 @@ type Dialog =
   | { kind: 'push' }
   | { kind: 'add' }
   | { kind: 'delete' }
+  | { kind: 'help' }
   | null;
 
 function readQueryNumber(): number | null {
@@ -36,6 +40,12 @@ function writeQueryNumber(id: string, n: number) {
 
 const stripPunct = (s: string) => s.replace(/^[.،؛:؟!«»()"'\-–—]+|[.،؛:؟!«»()"'\-–—]+$/g, '');
 
+const IMPORT_STEPS = [
+  'فایل Word را دانلود کنید.',
+  'در پنل مدیریت سایت دادرس، بخش «ورود هوشمند از ورد» را باز کنید و فایل را بارگذاری کنید.',
+  'سؤال‌های تکراری و پیش‌نمایش را بررسی کنید و «ثبت نهایی» را بزنید.',
+];
+
 export default function ReviewPage({ id }: { id: string }) {
   const toast = useToast();
   const { meta, health, engineAvailable } = useAppData();
@@ -45,12 +55,16 @@ export default function ReviewPage({ id }: { id: string }) {
   const [version, setVersion] = useState(0); // bump when the current question is replaced externally
   const [filter, setFilter] = useState<NavFilter>('all');
   const [activeFlag, setActiveFlag] = useState<number | null>(null);
+  const [hoverFlag, setHoverFlag] = useState<number | null>(null);
   const [focus, setFocus] = useState<FocusTarget | null>(null);
   const [tab, setTab] = useState<MobileTab>('text');
   const [dialog, setDialog] = useState<Dialog>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [onlyApproved, setOnlyApproved] = useState(true);
+  const [doneDismissed, setDoneDismissed] = useState(false);
+  const [pushResult, setPushResult] = useState<{ ok: boolean; text: string } | null>(null);
   const fieldRefs = useRef(new Map<string, HTMLTextAreaElement>());
+  const editorPane = useRef<HTMLDivElement>(null);
   const focusNonce = useRef(0);
 
   // ------------------------------------------------------------------ loading
@@ -100,10 +114,15 @@ export default function ReviewPage({ id }: { id: string }) {
     setProject((p) => (p ? { ...p, questions: p.questions.map((x) => (x.number === q.number ? q : x)) } : p));
   }, []);
 
-  const draftApi = useDraft(id, question, `${question?.number ?? 'none'}:${version}`, replaceQuestion, (err) => toast.error(err));
+  const retryRef = useRef<() => void>(() => {});
+  const onSaveError = useCallback(
+    (err: unknown) => toast.error(err, { label: 'تلاش دوباره', onClick: () => retryRef.current() }),
+    [toast],
+  );
+  const draftApi = useDraft(id, question, `${question?.number ?? 'none'}:${version}`, replaceQuestion, onSaveError);
   const { draft, state: saveState, update, setOption, flush, saveWith } = draftApi;
+  retryRef.current = () => void saveWith({});
 
-  // Merge draft into the current question for display (navigator colors etc. stay server-driven).
   const register = useCallback((field: string, el: HTMLTextAreaElement | null) => {
     if (el) fieldRefs.current.set(field, el);
     else fieldRefs.current.delete(field);
@@ -114,6 +133,7 @@ export default function ReviewPage({ id }: { id: string }) {
     if (!question) return;
     writeQueryNumber(id, question.number);
     setActiveFlag(null);
+    setHoverFlag(null);
     const r = question.regions.find((x) => x.doc === 'booklet') ?? question.regions[0];
     if (r) setFocus({ doc: r.doc, page: r.page, bbox: r.bbox, nonce: ++focusNonce.current });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -139,19 +159,61 @@ export default function ReviewPage({ id }: { id: string }) {
     [questions, idx, select],
   );
 
+  // Next question needing attention: errors first, then warnings, then anything not approved.
+  const counts = useMemo(() => {
+    let errors = 0;
+    let warnings = 0;
+    let pending = 0;
+    for (const q of questions) {
+      const s = questionState(q);
+      if (s === 'error') errors++;
+      else if (s === 'warning') warnings++;
+      if (s !== 'approved') pending++;
+    }
+    return { errors, warnings, pending, approved: questions.length - pending };
+  }, [questions]);
+
+  const findNextProblem = useCallback((): Question | null => {
+    const after = [...questions.slice(idx + 1), ...questions.slice(0, Math.max(idx, 0))].filter(
+      (q) => q.number !== current,
+    );
+    return (
+      after.find((q) => questionState(q) === 'error') ??
+      after.find((q) => questionState(q) === 'warning') ??
+      after.find((q) => q.status !== 'approved') ??
+      null
+    );
+  }, [questions, idx, current]);
+
+  const goNextProblem = useCallback(() => {
+    const q = findNextProblem();
+    if (q) void select(q.number);
+    else toast.info('سؤال دیگری برای بررسی نمانده است.');
+  }, [findNextProblem, select, toast]);
+
+  const nextProblem: NextProblem = useMemo(() => {
+    const others = (s: string) => questions.filter((q) => q.number !== current && questionState(q) === s).length;
+    const e = others('error');
+    const w = others('warning');
+    const p = questions.filter((q) => q.number !== current && q.status !== 'approved').length;
+    if (e) return { label: 'خطای بعدی', count: e, disabled: false, tone: 'error', onClick: goNextProblem };
+    if (w) return { label: 'مورد بعدی برای بررسی', count: w, disabled: false, tone: 'warning', onClick: goNextProblem };
+    if (p) return { label: 'تأییدنشده‌ی بعدی', count: p, disabled: false, tone: 'neutral', onClick: goNextProblem };
+    return { label: 'مورد دیگری نمانده', count: 0, disabled: true, tone: 'done', onClick: goNextProblem };
+  }, [questions, current, goNextProblem]);
+
   const approve = useCallback(async () => {
     if (!question) return;
     const wasApproved = question.status === 'approved';
     const ok = wasApproved ? await flush() : await saveWith({ status: 'approved' });
     if (!ok) return;
-    // next not-approved question after the current one (wrapping around)
     const after = [...questions.slice(idx + 1), ...questions.slice(0, idx)];
     const next = after.find((q) => q.status !== 'approved' && q.number !== question.number);
     if (next) setCurrent(next.number);
-    else {
+    else if (!wasApproved) {
+      setDoneDismissed(false);
       toast.success('همه‌ی سؤال‌ها تأیید شدند.');
-      if (wasApproved && questions[idx + 1]) setCurrent(questions[idx + 1].number);
-    }
+    } else if (questions[idx + 1]) setCurrent(questions[idx + 1].number);
   }, [question, questions, idx, flush, saveWith, toast]);
 
   const unapprove = useCallback(async () => {
@@ -167,27 +229,76 @@ export default function ReviewPage({ id }: { id: string }) {
     el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, []);
 
+  const onIssueClick = useCallback(
+    (target: string | null) => {
+      if (!target) return;
+      setTab('text');
+      if (fieldRefs.current.has(target)) {
+        focusField(target);
+        return;
+      }
+      const root = editorPane.current;
+      let el: HTMLElement | null = null;
+      if (target === 'key') {
+        el = root?.querySelector<HTMLElement>('[data-key-radio]:checked') ?? root?.querySelector<HTMLElement>('[data-key-radio]') ?? null;
+      } else {
+        el = root?.querySelector<HTMLElement>(`[data-field="${target}"]`) ?? null;
+      }
+      if (el) {
+        el.focus({ preventScroll: true });
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        const box = target === 'key' ? el.closest<HTMLElement>('fieldset') : el;
+        box?.classList.remove('flash');
+        void box?.offsetWidth;
+        box?.classList.add('flash');
+      }
+    },
+    [focusField],
+  );
+
   const onFlagClick = useCallback(
     (flag: Flag, index: number) => {
-      if (!question || !draft) return;
+      if (!draft) return;
       setActiveFlag(index);
       const text = getFieldText(draft, flag.field);
-      const mark = computeMarks(text, question.flags, flag.field).find((m) => m.flagIndex === index);
+      const mark = computeMarks(text, draft.flags, flag.field).find((m) => m.flagIndex === index);
       focusField(flag.field, mark?.start, mark?.end);
       setFocus({ doc: flag.doc, page: flag.page, bbox: flag.bbox, nonce: ++focusNonce.current });
     },
-    [question, draft, focusField],
+    [draft, focusField],
+  );
+
+  const resolveFlag = useCallback(
+    (index: number, useAlt: boolean) => {
+      if (!draft) return;
+      const flag = draft.flags[index];
+      if (!flag) return;
+      const patch: Partial<Draft> = { flags: draft.flags.filter((_, i) => i !== index) };
+      if (useAlt && flag.alt) {
+        const text = getFieldText(draft, flag.field);
+        const mark = computeMarks(text, draft.flags, flag.field).find((m) => m.flagIndex === index);
+        if (mark) {
+          Object.assign(patch, setFieldText(draft, flag.field, text.slice(0, mark.start) + flag.alt + text.slice(mark.end)));
+        } else {
+          toast.info(`«${flag.word}» در متن پیدا نشد؛ فقط از فهرست حذف شد.`);
+        }
+      }
+      setActiveFlag(null);
+      setHoverFlag(null);
+      update(patch, true);
+    },
+    [draft, update, toast],
   );
 
   const onWordClick = useCallback(
     (word: Word, line: Line, doc: DocKind, page: number) => {
       if (!question || !draft) return;
-      // A flagged word of this question?
-      const fi = question.flags.findIndex(
+      const fi = draft.flags.findIndex(
         (f) => f.doc === doc && f.page === page && f.bbox && word.bbox && f.bbox.every((v, i) => Math.abs(v - word.bbox![i]) < 0.002),
       );
       if (fi >= 0) {
-        onFlagClick(question.flags[fi], fi);
+        setTab('text');
+        onFlagClick(draft.flags[fi], fi);
         return;
       }
       const inRegion = question.regions.some(
@@ -211,8 +322,8 @@ export default function ReviewPage({ id }: { id: string }) {
         const text = getFieldText(draft, field);
         const at = text.indexOf(needle);
         if (at >= 0) {
-          focusField(field, at, at + needle.length);
           setTab('text');
+          focusField(field, at, at + needle.length);
           return;
         }
       }
@@ -228,20 +339,26 @@ export default function ReviewPage({ id }: { id: string }) {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
         void approve();
+      } else if (e.key === 'F8' || (e.altKey && e.code === 'KeyN')) {
+        e.preventDefault();
+        goNextProblem();
       } else if ((e.altKey && e.key === 'ArrowDown') || (e.key === 'PageDown' && !e.ctrlKey)) {
         e.preventDefault();
         goRel(1);
       } else if ((e.altKey && e.key === 'ArrowUp') || (e.key === 'PageUp' && !e.ctrlKey)) {
         e.preventDefault();
         goRel(-1);
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
         e.preventDefault();
         void flush();
+      } else if ((e.key === '?' || e.key === '؟') && !isTypingTarget(e.target)) {
+        e.preventDefault();
+        setDialog({ kind: 'help' });
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [approve, goRel, flush, dialog]);
+  }, [approve, goRel, goNextProblem, flush, dialog]);
 
   // ------------------------------------------------------------------ actions
   const doReocr = async (engine: EngineName) => {
@@ -252,7 +369,7 @@ export default function ReviewPage({ id }: { id: string }) {
       const q = await api.reocr(id, question.number, engine);
       replaceQuestion(q);
       setVersion((v) => v + 1);
-      toast.success(`سؤال ${fa(q.number)} بازخوانی شد.`);
+      toast.success(`سؤال ${fa(q.number)} دوباره خوانده شد.`);
     } catch (err) {
       toast.error(err);
     } finally {
@@ -269,7 +386,7 @@ export default function ReviewPage({ id }: { id: string }) {
       setProject(p);
       setCurrent(null);
       setVersion((v) => v + 1);
-      toast.success('تحلیل مجدد انجام شد.');
+      toast.success('سؤال‌ها دوباره استخراج شدند.');
     } catch (err) {
       toast.error(err);
     } finally {
@@ -286,7 +403,7 @@ export default function ReviewPage({ id }: { id: string }) {
       if (!p) setProject((pp) => (pp ? { ...pp, questions: [...pp.questions, q] } : pp));
       setCurrent(q.number);
       setVersion((v) => v + 1);
-      toast.success(`سؤال ${fa(q.number)} اضافه شد.`);
+      toast.success(`سؤال ${fa(q.number)} اضافه شد؛ متن آن را از روی تصویر وارد کنید.`);
     } catch (err) {
       toast.error(err);
     }
@@ -309,7 +426,6 @@ export default function ReviewPage({ id }: { id: string }) {
     }
   };
 
-  const [pushResult, setPushResult] = useState<{ ok: boolean; text: string } | null>(null);
   const doPush = async () => {
     await flush();
     setBusy('push');
@@ -340,7 +456,7 @@ export default function ReviewPage({ id }: { id: string }) {
                 تلاش دوباره
               </button>
               <a className="btn btn-ghost" href="#/">
-                بازگشت به پروژه‌ها
+                بازگشت به فهرست پروژه‌ها
               </a>
             </div>
           </div>
@@ -357,101 +473,132 @@ export default function ReviewPage({ id }: { id: string }) {
     );
   }
 
-  if (project.status !== 'ready') {
-    const pct = percent(project.progress.done, project.progress.total);
-    return (
-      <div className="page">
-        <ReviewTopbar title={project.title} />
-        <main className="container narrow">
-          <div className="card processing-card" aria-live="polite">
-            <h2 className="card-title">{project.title}</h2>
-            <StatusChip status={project.status} stage={project.progress.stage} />
-            {project.status === 'failed' ? (
-              <>
-                <div className="alert alert-danger">{project.error || 'پردازش ناموفق بود.'}</div>
-                <a className="btn" href="#/">
-                  بازگشت به پروژه‌ها
-                </a>
-              </>
-            ) : (
-              <>
-                <ol className="stages">
-                  {(['queued', 'rendering', 'ocr', 'parsing'] as const).map((s, i, all) => {
-                    const curIdx = all.indexOf(project.progress.stage as (typeof all)[number]);
-                    return (
-                      <li key={s} className={cx('stage', i < curIdx && 'is-done', i === curIdx && 'is-current')}>
-                        <span className="stage-dot">{i < curIdx ? <Icon name="check" size={14} /> : fa(i + 1)}</span>
-                        {STAGE_LABELS[s]}
-                      </li>
-                    );
-                  })}
-                </ol>
-                <div className="bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-                  <div className={cx('bar-fill', !project.progress.total && 'is-indeterminate')} style={{ width: `${pct}%` }} />
-                </div>
-                <div className="muted small">
-                  {STAGE_LABELS[project.progress.stage] ?? project.progress.stage}
-                  {project.progress.total > 0 && (
-                    <>
-                      {' '}— {fa(project.progress.done)} از {fa(project.progress.total)} صفحه
-                    </>
-                  )}
-                </div>
-                <div className="muted small">موتور: {ENGINE_LABELS[project.engine] ?? project.engine}</div>
-              </>
-            )}
-          </div>
-        </main>
-      </div>
-    );
-  }
+  if (project.status !== 'ready') return <ProcessingView project={project} />;
 
-  const approvedCount = questions.filter((q) => q.status === 'approved').length;
-  const errorCount = questions.filter((q) => questionState(q) === 'error').length;
-  const pushCount = onlyApproved ? approvedCount : questions.length;
+  const total = questions.length;
+  const approvedCount = counts.approved;
+  const allApproved = total > 0 && approvedCount === total;
+  const exportCount = onlyApproved ? approvedCount : total;
+  const pushConfigured = health?.push_configured === true;
+  const wordUrl = exportUrl(id, onlyApproved, 'docx');
+  const wordFile = `dadrose-${id}.docx`;
+  const pct = percent(approvedCount, total);
+
+  const wordButton = (big = false) =>
+    exportCount === 0 ? (
+      <button
+        className={cx('btn btn-word', big ? 'btn-lg' : 'btn-sm')}
+        disabled
+        title="هنوز سؤالی تأیید نشده؛ گزینه‌ی «فقط تأییدشده‌ها» را بردارید یا ابتدا سؤال‌ها را تأیید کنید."
+        data-testid="download-word"
+      >
+        <Icon name="download" size={big ? 20 : 16} /> دانلود فایل Word
+      </button>
+    ) : (
+      <a
+        className={cx('btn btn-word', big ? 'btn-lg' : 'btn-sm')}
+        href={wordUrl}
+        download={wordFile}
+        title="فایل Word در قالب رسمی «ورود هوشمند از ورد» سایت"
+        data-testid="download-word"
+      >
+        <Icon name="download" size={big ? 20 : 16} /> دانلود فایل Word <span className="btn-count">{fa(exportCount)} سؤال</span>
+      </a>
+    );
+
+  const completion =
+    allApproved && !doneDismissed ? (
+      <div className="done-card" role="status" data-testid="done-card">
+        <div className="done-head">
+          <span className="done-icon">
+            <Icon name="check" size={26} />
+          </span>
+          <div>
+            <h3>همه‌ی سؤال‌ها تأیید شد</h3>
+            <p className="muted">{fa(total)} سؤال آماده‌ی ورود به سایت است.</p>
+          </div>
+        </div>
+        {wordButton(true)}
+        <ol className="done-steps">
+          {IMPORT_STEPS.map((s, i) => (
+            <li key={i}>{s}</li>
+          ))}
+        </ol>
+        <button className="btn btn-sm btn-ghost" onClick={() => setDoneDismissed(true)}>
+          بستن و ادامه‌ی ویرایش
+        </button>
+      </div>
+    ) : null;
 
   return (
     <div className="review">
       <header className="review-header">
-        <a href="#/" className="btn btn-sm btn-ghost btn-icon" aria-label="بازگشت به پروژه‌ها" title="بازگشت">
+        <a href="#/" className="btn btn-sm btn-ghost btn-icon" aria-label="بازگشت به فهرست پروژه‌ها" title="بازگشت به فهرست پروژه‌ها">
           <Icon name="back" />
         </a>
         <div className="review-title">
           <h1 dir="auto">{project.title}</h1>
-          <div className="small muted review-sub">
-            {TRACK_LABELS[project.track]} {project.year ? fa(project.year) : ''} ·{' '}
-            <span data-testid="count-total">{fa(questions.length)}</span> سؤال ·{' '}
-            <span className="text-success" data-testid="count-approved">{fa(approvedCount)}</span> تأییدشده ·{' '}
-            <span className={errorCount ? 'text-danger' : undefined}>{fa(errorCount)}</span> خطا
+          <div className="review-progress">
+            <div className="bar bar-sm" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="پیشرفت تأیید">
+              <div className="bar-fill bar-success" style={{ width: `${pct}%` }} />
+            </div>
+            <span className="small">
+              <b data-testid="count-approved">{fa(approvedCount)}</b> از <span data-testid="count-total">{fa(total)}</span> سؤال تأیید شد
+              {counts.errors > 0 && <span className="text-danger"> · {fa(counts.errors)} خطا</span>}
+            </span>
           </div>
         </div>
+        <button
+          className="btn btn-sm btn-ghost btn-icon show-mobile"
+          onClick={() => setDialog({ kind: 'help' })}
+          title="راهنما"
+          aria-label="راهنما"
+        >
+          <span className="help-q" aria-hidden="true">؟</span>
+        </button>
         <div className="review-actions">
-          <button className="btn btn-sm" onClick={() => setDialog({ kind: 'reparse' })} disabled={busy === 'reparse'}>
-            <Icon name="refresh" size={16} /> {busy === 'reparse' ? 'در حال تحلیل…' : 'تحلیل مجدد'}
-          </button>
-          <label className="toggle toggle-sm" title="خروجی و ارسال فقط شامل سؤال‌های تأییدشده باشد">
+          <label className="toggle toggle-sm" title="فایل خروجی فقط شامل سؤال‌های تأییدشده باشد">
             <input type="checkbox" checked={onlyApproved} onChange={(e) => setOnlyApproved(e.target.checked)} />
             <span>فقط تأییدشده‌ها</span>
           </label>
-          <a
-            className="btn btn-sm"
-            href={exportUrl(id, onlyApproved, 'docx')}
-            download={`dadrose-${id}.docx`}
-            title="فایل Word در قالب رسمی «ورود هوشمند از ورد» سایت دادرز"
-          >
-            <Icon name="download" size={16} /> دانلود Word
-          </a>
-          <a className="btn btn-sm" href={exportUrl(id, onlyApproved)} download={`dadrose-${id}.json`}>
-            <Icon name="download" size={16} /> JSON
-          </a>
-          <button
-            className="btn btn-sm btn-primary"
-            onClick={() => {
-              setPushResult(null);
-              setDialog({ kind: 'push' });
-            }}
-          >
-            <Icon name="send" size={16} /> ارسال به سایت
+          {wordButton()}
+          <Menu
+            label="بیشتر"
+            items={[
+              {
+                label: 'دانلود JSON',
+                hint: 'برای برنامه‌نویس‌ها',
+                icon: 'file',
+                href: exportUrl(id, onlyApproved, 'json'),
+                download: `dadrose-${id}.json`,
+                disabled: exportCount === 0,
+                testId: 'menu-json',
+              },
+              {
+                label: 'ارسال مستقیم به سایت',
+                hint: pushConfigured ? `${fa(exportCount)} سؤال` : 'پیکربندی نشده — از فایل Word استفاده کنید',
+                icon: 'send',
+                disabled: !pushConfigured,
+                onSelect: () => {
+                  setPushResult(null);
+                  setDialog({ kind: 'push' });
+                },
+                testId: 'menu-push',
+              },
+              'sep',
+              {
+                label: busy === 'reparse' ? 'در حال استخراج…' : 'استخراج دوباره‌ی سؤال‌ها',
+                hint: 'ویرایش‌ها و تأییدها پاک می‌شود',
+                icon: 'refresh',
+                danger: true,
+                disabled: busy === 'reparse',
+                onSelect: () => setDialog({ kind: 'reparse' }),
+                testId: 'menu-reparse',
+              },
+            ]}
+          />
+          <button className="btn btn-sm btn-ghost hide-mobile" onClick={() => setDialog({ kind: 'help' })} title="راهنما (کلید ?)" data-testid="help">
+            <span className="help-q" aria-hidden="true">؟</span> راهنما
           </button>
         </div>
       </header>
@@ -459,7 +606,7 @@ export default function ReviewPage({ id }: { id: string }) {
       <div className="tabs" role="tablist" aria-label="نما">
         {(
           [
-            ['list', 'سؤال‌ها', 'list'],
+            ['list', 'فهرست سؤال‌ها', 'list'],
             ['text', 'متن', 'text'],
             ['image', 'تصویر', 'image'],
           ] as const
@@ -482,7 +629,7 @@ export default function ReviewPage({ id }: { id: string }) {
             onAdd={() => setDialog({ kind: 'add' })}
           />
         </div>
-        <div className="pane pane-editor">
+        <div className="pane pane-editor" ref={editorPane}>
           {question && draft ? (
             <Editor
               question={question}
@@ -492,7 +639,7 @@ export default function ReviewPage({ id }: { id: string }) {
               onChange={update}
               onOption={setOption}
               onBlurField={() => void flush()}
-              onSave={() => void flush()}
+              onSave={() => void saveWith({})}
               onApprove={() => void approve()}
               onUnapprove={() => void unapprove()}
               onReocr={() => setDialog({ kind: 'reocr' })}
@@ -503,11 +650,16 @@ export default function ReviewPage({ id }: { id: string }) {
               hasPrev={idx > 0}
               hasNext={idx >= 0 && idx < questions.length - 1}
               onFlagClick={onFlagClick}
+              onFlagHover={setHoverFlag}
+              onResolveFlag={resolveFlag}
+              onIssueClick={onIssueClick}
               register={register}
               index={idx}
               total={questions.length}
               reocrBusy={busy === 'reocr'}
               hasExplanations={hasExplanations}
+              nextProblem={nextProblem}
+              banner={completion}
             />
           ) : (
             <div className="empty muted">
@@ -529,13 +681,25 @@ export default function ReviewPage({ id }: { id: string }) {
             projectId={id}
             documents={project.documents}
             question={question}
+            flags={draft?.flags ?? question?.flags ?? []}
             activeFlagIndex={activeFlag}
+            hoverFlagIndex={hoverFlag}
             focus={focus}
             onWordClick={onWordClick}
           />
         </div>
       </div>
 
+      {/* Mobile: primary actions always reachable */}
+      <div className="mobile-bar">
+        <button className="btn btn-success" onClick={() => void approve()} disabled={!question} data-testid="mobile-approve">
+          <Icon name="check" /> {question?.status === 'approved' ? 'بعدی' : 'تأیید و بعدی'}
+        </button>
+        <NextProblemButton np={nextProblem} />
+        {allApproved && wordButton()}
+      </div>
+
+      {dialog?.kind === 'help' && <HelpDialog onClose={() => setDialog(null)} />}
       {dialog?.kind === 'reocr' && question && (
         <ReocrDialog
           number={question.number}
@@ -554,9 +718,7 @@ export default function ReviewPage({ id }: { id: string }) {
           onConfirm={doReparse}
         />
       )}
-      {dialog?.kind === 'add' && (
-        <AddDialog questions={questions} onCancel={() => setDialog(null)} onConfirm={doAdd} />
-      )}
+      {dialog?.kind === 'add' && <AddDialog questions={questions} onCancel={() => setDialog(null)} onConfirm={doAdd} />}
       {dialog?.kind === 'delete' && question && (
         <Modal
           title={`حذف سؤال ${fa(question.number)}`}
@@ -564,8 +726,8 @@ export default function ReviewPage({ id }: { id: string }) {
           onClose={() => setDialog(null)}
           footer={
             <>
-              <button className="btn btn-danger" onClick={doDelete}>
-                حذف
+              <button className="btn btn-danger" onClick={doDelete} data-testid="confirm-delete">
+                بله، حذف شود
               </button>
               <button className="btn" onClick={() => setDialog(null)}>
                 انصراف
@@ -573,17 +735,20 @@ export default function ReviewPage({ id }: { id: string }) {
             </>
           }
         >
-          <p>این سؤال از پروژه حذف می‌شود. ادامه می‌دهید؟</p>
+          <p>
+            سؤال {fa(question.number)} از این پروژه حذف می‌شود و در فایل خروجی نخواهد بود. این کار قابل بازگشت نیست. فقط
+            وقتی حذف کنید که سؤال تکراری یا اشتباه استخراج شده باشد.
+          </p>
         </Modal>
       )}
       {dialog?.kind === 'push' && (
         <Modal
-          title="ارسال به سایت دادرس"
+          title="ارسال مستقیم به سایت"
           onClose={() => setDialog(null)}
           footer={
             <>
-              <button className="btn btn-primary" onClick={doPush} disabled={busy === 'push' || pushCount === 0}>
-                <Icon name="send" size={16} /> {busy === 'push' ? 'در حال ارسال…' : `ارسال ${fa(pushCount)} سؤال`}
+              <button className="btn btn-primary" onClick={doPush} disabled={busy === 'push' || exportCount === 0}>
+                <Icon name="send" size={16} /> {busy === 'push' ? 'در حال ارسال…' : `ارسال ${fa(exportCount)} سؤال`}
               </button>
               <button className="btn" onClick={() => setDialog(null)}>
                 بستن
@@ -591,12 +756,15 @@ export default function ReviewPage({ id }: { id: string }) {
             </>
           }
         >
+          <p className="muted small">روش پیشنهادی، دانلود فایل Word و بارگذاری آن در «ورود هوشمند از ورد» است.</p>
           <label className="toggle">
             <input type="checkbox" checked={onlyApproved} onChange={(e) => setOnlyApproved(e.target.checked)} />
-            <span>فقط سؤال‌های تأییدشده ({fa(approvedCount)} از {fa(questions.length)})</span>
+            <span>
+              فقط سؤال‌های تأییدشده ({fa(approvedCount)} از {fa(total)})
+            </span>
           </label>
-          {!onlyApproved && errorCount > 0 && (
-            <div className="alert alert-warning small">{fa(errorCount)} سؤال هنوز خطا دارد.</div>
+          {!onlyApproved && counts.errors > 0 && (
+            <div className="alert alert-warning small">{fa(counts.errors)} سؤال هنوز خطا دارد.</div>
           )}
           {pushResult && (
             <div className={cx('alert', pushResult.ok ? 'alert-success' : 'alert-danger')} data-testid="push-result">
@@ -612,10 +780,85 @@ export default function ReviewPage({ id }: { id: string }) {
   );
 }
 
+function ProcessingView({ project }: { project: Project }) {
+  const { done, total, stage } = project.progress;
+  const docPages = project.documents.reduce((s, d) => s + d.page_count, 0);
+  const pages = total || docPages;
+  const remaining = Math.max(0, pages - (stage === 'ocr' ? done : stage === 'parsing' ? pages : 0));
+  const pct = percent(done, total);
+  const stages = ['queued', 'rendering', 'ocr', 'parsing'] as const;
+  const curIdx = stages.indexOf(stage as (typeof stages)[number]);
+  const failed = project.status === 'failed';
+  const STAGE_HELP: Record<string, string> = {
+    queued: 'فایل در نوبت پردازش است و به‌زودی شروع می‌شود.',
+    rendering: 'صفحه‌های PDF به تصویر تبدیل می‌شوند و کج‌بودن و سایه‌ی اسکن اصلاح می‌شود.',
+    ocr: 'متن هر صفحه خوانده می‌شود. این طولانی‌ترین مرحله است.',
+    parsing: 'سؤال‌ها، گزینه‌ها، کلید و پاسخ‌های تشریحی از متن جدا می‌شوند.',
+  };
+
+  return (
+    <div className="page">
+      <ReviewTopbar title={project.title} />
+      <main className="container narrow">
+        <div className="card processing-card" aria-live="polite">
+          <div className="processing-head">
+            <h2 className="card-title">{project.title}</h2>
+            <StatusChip status={project.status} stage={stage} />
+          </div>
+          {failed ? (
+            <>
+              <div className="alert alert-danger">{project.error || 'پردازش ناموفق بود.'}</div>
+              <p className="muted">
+                اگر فایل رمز دارد یا خراب است، نسخه‌ی دیگری از آن را بارگذاری کنید. برای اسکن‌های موبایل، عکس واضح و
+                بدون سایه نتیجه‌ی بهتری می‌دهد.
+              </p>
+              <a className="btn btn-primary" href="#/">
+                بازگشت به فهرست پروژه‌ها
+              </a>
+            </>
+          ) : (
+            <>
+              <p>
+                فایل شما در حال پردازش است. پس از پایان، این صفحه خودکار به صفحه‌ی بازبینی تبدیل می‌شود.
+              </p>
+              <ol className="stages">
+                {stages.map((s, i) => (
+                  <li key={s} className={cx('stage', i < curIdx && 'is-done', i === curIdx && 'is-current')}>
+                    <span className="stage-dot">{i < curIdx ? <Icon name="check" size={14} /> : fa(i + 1)}</span>
+                    {STAGE_LABELS[s]}
+                  </li>
+                ))}
+              </ol>
+              <div className="bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+                <div className={cx('bar-fill', !total && 'is-indeterminate')} style={{ width: `${pct}%` }} />
+              </div>
+              <div className="processing-stats">
+                {total > 0 && (
+                  <span>
+                    صفحه‌ی <b>{fa(Math.min(done + (stage === 'ocr' ? 1 : 0), total))}</b> از <b>{fa(total)}</b>
+                  </span>
+                )}
+                {pages > 0 && <span>زمان باقی‌مانده: {etaText(remaining)} (هر صفحه حدود ۵ تا ۱۵ ثانیه)</span>}
+              </div>
+              <p className="muted small">{STAGE_HELP[stage] ?? ''}</p>
+              <div className="processing-foot">
+                <a className="btn" href="#/">
+                  <Icon name="back" size={16} /> بازگشت به فهرست (پردازش ادامه دارد)
+                </a>
+                <span className="muted small">موتور خواندن متن: {ENGINE_LABELS[project.engine] ?? project.engine}</span>
+              </div>
+            </>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
+
 function ReviewTopbar({ title }: { title?: string }) {
   return (
     <header className="topbar">
-      <a href="#/" className="brand" aria-label="بازگشت به پروژه‌ها">
+      <a href="#/" className="brand" aria-label="بازگشت به فهرست پروژه‌ها">
         <BrandMark />
         <div>
           <div className="brand-name">دادرس</div>
@@ -639,7 +882,7 @@ function ReocrDialog({
   const [engine, setEngine] = useState<EngineName>(engineAvailable(defaultEngine) ? defaultEngine : 'auto');
   return (
     <Modal
-      title={`بازخوانی سؤال ${fa(number)}`}
+      title={`بازخوانی سؤال ${fa(number)} با هوش مصنوعی`}
       onClose={onCancel}
       footer={
         <>
@@ -652,7 +895,10 @@ function ReocrDialog({
         </>
       }
     >
-      <p>متن سؤال از روی ناحیه‌ی آن در تصویر دوباره خوانده می‌شود و <b>جایگزین متن فعلی و ویرایش‌های شما</b> می‌شود.</p>
+      <p>
+        وقتی متن این سؤال خیلی به‌هم ریخته است، می‌توانید آن را دوباره از روی تصویر بخوانید.{' '}
+        <b>متن فعلی و ویرایش‌های شما در این سؤال جایگزین می‌شود.</b>
+      </p>
       <label className="field">
         <span className="field-label">موتور</span>
         <select className="input" value={engine} onChange={(e) => setEngine(e.target.value as EngineName)}>
@@ -679,13 +925,13 @@ function ReparseDialog({
   const [bp, setBp] = useState(current || 'auto');
   return (
     <Modal
-      title="تحلیل مجدد سؤال‌ها"
+      title="استخراج دوباره‌ی سؤال‌ها"
       tone="danger"
       onClose={onCancel}
       footer={
         <>
-          <button className="btn btn-danger" onClick={() => onConfirm(bp)}>
-            تحلیل مجدد
+          <button className="btn btn-danger" onClick={() => onConfirm(bp)} data-testid="confirm-reparse">
+            استخراج دوباره
           </button>
           <button className="btn" onClick={onCancel}>
             انصراف
@@ -694,10 +940,13 @@ function ReparseDialog({
       }
     >
       <p>
-        سؤال‌ها از روی متن OCR ذخیره‌شده دوباره استخراج می‌شوند.{' '}
-        <b>همه‌ی ویرایش‌ها و تأییدها از بین می‌رود</b>
-        {editedCount > 0 && <> ({fa(editedCount)} سؤال ویرایش یا تأیید شده)</>}.
+        سؤال‌ها از روی متنی که قبلاً از فایل خوانده شده، دوباره جدا می‌شوند (فایل دوباره خوانده نمی‌شود). مناسب وقتی است
+        که الگوی آزمون اشتباه بوده یا سؤال‌ها به‌هم ریخته‌اند.
       </p>
+      <div className="alert alert-danger small">
+        همه‌ی ویرایش‌ها و تأییدهای شما پاک می‌شود
+        {editedCount > 0 && <> ({fa(editedCount)} سؤال ویرایش یا تأیید شده)</>}.
+      </div>
       <label className="field">
         <span className="field-label">الگوی آزمون</span>
         <select className="input" value={bp} onChange={(e) => setBp(e.target.value)}>
@@ -743,6 +992,7 @@ function AddDialog({
         </>
       }
     >
+      <p className="muted small">برای سؤالی که استخراج نشده، یک سؤال خالی بسازید و متن آن را از روی تصویر وارد کنید.</p>
       <form
         onSubmit={(e) => {
           e.preventDefault();

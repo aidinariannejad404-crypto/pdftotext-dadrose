@@ -66,3 +66,39 @@ test('review page dark mode', async ({ page }) => {
   await page.waitForTimeout(800);
   await page.screenshot({ path: `${OUT}/review-desktop-dark.png` });
 });
+
+test('upload form filled (desktop)', async ({ page }) => {
+  await reset(page);
+  await page.goto('/#/');
+  await page.locator('#drop-booklet-input').setInputFiles([
+    { name: 'IMG_0412.jpg', mimeType: 'image/jpeg', buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
+    { name: 'IMG_0413.HEIC', mimeType: 'image/heic', buffer: Buffer.from([0, 0, 0, 0]) },
+    { name: 'kanoon-1404-camscanner.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF /Type /Page /Type /Page /Type /Page') },
+  ]);
+  await page.locator('#up-year').fill('1404');
+  await page.locator('summary', { hasText: 'تنظیمات پیشرفته' }).click();
+  await page.evaluate(() => document.fonts.ready);
+  await page.screenshot({ path: `${OUT}/upload-filled-desktop.png`, fullPage: true });
+});
+
+test('review extras (desktop): menu, help, completion', async ({ page }) => {
+  await reset(page);
+  await page.goto('/#/p/demo?q=4');
+  await page.getByTestId('current-number').waitFor();
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: `${OUT}/review-desktop-issues.png` });
+  await page.getByTestId('more-menu').click();
+  await page.screenshot({ path: `${OUT}/review-desktop-menu.png` });
+  await page.keyboard.press('Escape');
+  await page.getByTestId('help').click();
+  await page.screenshot({ path: `${OUT}/review-desktop-help.png` });
+  await page.keyboard.press('Escape');
+  const project = await (await page.request.get('/api/projects/demo')).json();
+  for (const q of project.questions) await page.request.put(`/api/projects/demo/questions/${q.number}`, { data: { status: 'approved' } });
+  await page.goto('/#/p/demo?q=1');
+  await page.reload();
+  await page.getByTestId('done-card').waitFor();
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: `${OUT}/review-desktop-done.png` });
+});

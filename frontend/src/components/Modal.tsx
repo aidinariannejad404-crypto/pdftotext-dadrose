@@ -6,10 +6,11 @@ interface Props {
   onClose: () => void;
   footer?: ReactNode;
   tone?: 'default' | 'danger';
+  wide?: boolean;
 }
 
 /** Minimal accessible dialog: Esc closes, focus moves inside and is restored on close. */
-export default function Modal({ title, children, onClose, footer, tone = 'default' }: Props) {
+export default function Modal({ title, children, onClose, footer, tone = 'default', wide }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const closeRef = useRef(onClose);
@@ -50,7 +51,7 @@ export default function Modal({ title, children, onClose, footer, tone = 'defaul
 
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal modal-${tone}`} role="dialog" aria-modal="true" aria-labelledby={titleId} ref={ref} tabIndex={-1}>
+      <div className={`modal modal-${tone}${wide ? ' modal-wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} ref={ref} tabIndex={-1}>
         <h2 id={titleId} className="modal-title">
           {title}
         </h2>

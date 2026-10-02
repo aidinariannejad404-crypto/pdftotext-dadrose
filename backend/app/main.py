@@ -10,11 +10,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
-import pymupdf
-from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from .config import get_settings
 from .jobs import JobRunner
@@ -118,18 +118,23 @@ def _summary(project: Project) -> ProjectSummary:
     )
 
 
-async def _read_pdf(upload: UploadFile) -> tuple[bytes, int]:
-    data = await upload.read()
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(413, "حجم فایل بیش از حد مجاز است (۲۰۰ مگابایت).")
+async def _read_files(uploads: list[UploadFile]) -> tuple[bytes, int, str]:
+    """PDFs and/or photos → one PDF (in upload order). Returns (pdf, pages, display name)."""
+    from .uploads import UploadError, combine
+
+    files, total = [], 0
+    for upload in uploads:
+        data = await upload.read()
+        total += len(data)
+        if total > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, "حجم فایل‌ها بیش از حد مجاز است (۲۰۰ مگابایت).")
+        files.append((upload.filename or "file", data))
     try:
-        with pymupdf.open(stream=data, filetype="pdf") as doc:
-            pages = doc.page_count
-    except Exception as exc:
-        raise HTTPException(400, f"فایل «{upload.filename}» یک PDF معتبر نیست.") from exc
-    if pages == 0:
-        raise HTTPException(400, f"فایل «{upload.filename}» هیچ صفحه‌ای ندارد.")
-    return data, pages
+        pdf, pages = await run_in_threadpool(combine, files, settings.render_dpi)
+    except UploadError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    name = files[0][0] if len(files) == 1 else f"{files[0][0]} (+{len(files) - 1} فایل)"
+    return pdf, pages, name
 
 
 # ------------------------------------------------------------------------ meta
@@ -169,21 +174,22 @@ def list_projects():
 
 @app.post("/api/projects", response_model=Project)
 async def create_project(
-    booklet: Annotated[UploadFile, File()],
-    explanations: Annotated[UploadFile | None, File()] = None,
+    booklet: Annotated[list[UploadFile], File()],
+    explanations: Annotated[list[UploadFile] | None, File()] = None,
     title: Annotated[str, Form()] = "",
     track: Annotated[Literal["bar", "center", "other"], Form()] = "other",
     year: Annotated[int | None, Form()] = None,
     blueprint: Annotated[str, Form()] = "auto",
     engine: Annotated[EngineName, Form()] = "auto",
 ):
-    uploads: list[tuple[DocKind, UploadFile]] = [("booklet", booklet)]
-    if explanations is not None and explanations.filename:
-        uploads.append(("explanations", explanations))
+    uploads: list[tuple[DocKind, list[UploadFile]]] = [("booklet", booklet)]
+    explanation_files = [f for f in explanations or [] if f.filename]
+    if explanation_files:
+        uploads.append(("explanations", explanation_files))
 
     project = Project(
         id=uuid.uuid4().hex[:12],
-        title=title.strip() or Path(booklet.filename or "دفترچه").stem,
+        title=title.strip() or Path(booklet[0].filename or "دفترچه").stem,
         track=track,
         year=year,
         blueprint=blueprint or "auto",
@@ -191,12 +197,10 @@ async def create_project(
         created_at=datetime.now(UTC),
     )
     contents = []
-    for kind, upload in uploads:
-        data, pages = await _read_pdf(upload)
+    for kind, files in uploads:
+        data, pages, name = await _read_files(files)
         contents.append((kind, data))
-        project.documents.append(
-            DocInfo(kind=kind, filename=upload.filename or f"{kind}.pdf", page_count=pages)
-        )
+        project.documents.append(DocInfo(kind=kind, filename=name, page_count=pages))
     project.progress.total = sum(d.page_count for d in project.documents)
     for kind, data in contents:
         store.save_upload(project.id, kind, data)
@@ -300,10 +304,11 @@ class ReocrBody(BaseModel):
 
 
 @app.post("/api/projects/{project_id}/questions/{number}/reocr", response_model=Question)
-def reocr_question(project_id: str, number: int, body: ReocrBody = Body(default_factory=ReocrBody)):
+def reocr_question(project_id: str, number: int, body: ReocrBody | None = None):
     from .parser import parse_single_question
     from .pipeline import reocr_region
 
+    body = body or ReocrBody()
     project = _load(project_id)
     question = _find(project, number)
     regions = [r for r in question.regions if r.doc == "booklet"]
@@ -341,7 +346,8 @@ class ReparseBody(BaseModel):
 
 
 @app.post("/api/projects/{project_id}/reparse", response_model=Project)
-def reparse(project_id: str, body: ReparseBody = Body(default_factory=ReparseBody)):
+def reparse(project_id: str, body: ReparseBody | None = None):
+    body = body or ReparseBody()
     project = _load(project_id)
     if project.status in ("queued", "processing"):
         raise HTTPException(409, "پروژه هنوز در حال پردازش است.")
@@ -383,9 +389,10 @@ class PushBody(BaseModel):
 
 
 @app.post("/api/projects/{project_id}/push")
-def push(project_id: str, body: PushBody = Body(default_factory=PushBody)):
+def push(project_id: str, body: PushBody | None = None):
     from .export import push_to_dadrose, to_dadrose_payload
 
+    body = body or PushBody()
     project = _load(project_id)
     payload = to_dadrose_payload(project, body.only_approved)
     if not payload["questions"]:

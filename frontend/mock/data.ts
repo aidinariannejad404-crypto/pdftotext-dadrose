@@ -15,10 +15,10 @@ const SPACE_W = 11;
 
 export const META: Meta = {
   blueprints: [
-    { code: 'bar-1403', title: 'کانون وکلا ۱۴۰۳', track: 'bar', year: 1403, question_count: 150 },
-    { code: 'bar-1402', title: 'کانون وکلا ۱۴۰۲', track: 'bar', year: 1402, question_count: 150 },
-    { code: 'center-1403', title: 'مرکز وکلا ۱۴۰۳', track: 'center', year: 1403, question_count: 140 },
-    { code: 'mock-12', title: 'نمونه‌ی ۱۲ سؤالی (ماک)', track: 'bar', year: 1404, question_count: 12 },
+    { code: 'BAR-1405', title: 'آزمون ورودی کارآموزی کانون وکلا ۱۴۰۵', track: 'bar', year: 1405, question_count: 140 },
+    { code: 'CENTER-1404', title: 'آزمون وکالت مرکز وکلا ۱۴۰۴', track: 'center', year: 1404, question_count: 135 },
+    { code: 'CENTER-1405', title: 'آزمون وکالت مرکز وکلا ۱۴۰۵', track: 'center', year: 1405, question_count: 135 },
+    { code: 'CENTER-1402', title: 'آزمون وکالت مرکز وکلا ۱۴۰۲ (بازسازی)', track: 'center', year: 1402, question_count: 130 },
   ],
   subjects: [
     { key: 'civil', name: 'حقوق مدنی' },
@@ -26,6 +26,11 @@ export const META: Meta = {
     { key: 'criminal', name: 'حقوق جزا' },
     { key: 'criminal_procedure', name: 'آیین دادرسی کیفری' },
     { key: 'commercial', name: 'حقوق تجارت' },
+    { key: 'usul_fiqh', name: 'اصول فقه' },
+    { key: 'fiqh_bar', name: 'متون فقه کانون وکلا' },
+    { key: 'constitutional', name: 'حقوق اساسی' },
+    { key: 'fiqh_center', name: 'متون فقه مرکز وکلا' },
+    { key: 'registration_law', name: 'حقوق ثبت مرکز وکلا' },
   ],
 };
 
@@ -332,19 +337,21 @@ ${content}
 // ---------------------------------------------------------------- questions
 
 export function validateQuestion(q: Question, hasExplanations: boolean): Issue[] {
+  // Mirrors backend/app/validate.py codes, levels and fields.
   const issues: Issue[] = [];
   if (!q.stem.trim()) issues.push({ level: 'error', code: 'empty_stem', message: 'صورت سؤال خالی است.', field: 'stem' });
-  if (q.options.length !== 4) issues.push({ level: 'error', code: 'option_count', message: 'سؤال باید دقیقاً ۴ گزینه داشته باشد.', field: null });
+  if (q.options.length !== 4) {
+    issues.push({ level: 'error', code: 'option_count', message: `تعداد گزینه‌ها ${fa(q.options.length)} است (باید ۴ باشد).`, field: null });
+  }
   for (const o of q.options) {
-    if (!o.text.trim()) issues.push({ level: 'error', code: 'empty_option', message: `گزینه‌ی ${fa(o.key)} خالی است.`, field: `option:${o.key}` });
+    if (!o.text.trim()) issues.push({ level: 'error', code: 'empty_option', message: `متن گزینه ${fa(o.key)} خالی است.`, field: `option:${o.key}` });
   }
-  if (!q.correct_key) issues.push({ level: 'error', code: 'missing_key', message: 'کلید سؤال در جدول کلید پیدا نشد.', field: 'correct_key' });
-  if (!q.subject_key) issues.push({ level: 'warning', code: 'missing_subject', message: 'درس سؤال مشخص نیست.', field: 'subject_key' });
+  if (!q.correct_key) issues.push({ level: 'error', code: 'missing_key', message: 'کلید (گزینه صحیح) مشخص نیست.', field: null });
   if (hasExplanations && !q.explanation.trim()) {
-    issues.push({ level: 'warning', code: 'missing_explanation', message: 'پاسخ تشریحی این سؤال پیدا نشد.', field: 'explanation' });
+    issues.push({ level: 'warning', code: 'missing_explanation', message: 'پاسخ تشریحی پیدا نشد.', field: 'explanation' });
   }
-  const texts = q.options.map((o) => o.text.trim()).filter(Boolean);
-  if (new Set(texts).size !== texts.length) issues.push({ level: 'warning', code: 'duplicate_options', message: 'دو گزینه متن یکسان دارند.', field: null });
+  if (q.flags.length) issues.push({ level: 'warning', code: 'suspicious_words', message: `${fa(q.flags.length)} کلمه مشکوک`, field: null });
+  if (!q.subject_key) issues.push({ level: 'warning', code: 'missing_subject', message: 'درس سؤال مشخص نیست.', field: null });
   return issues;
 }
 
@@ -371,14 +378,14 @@ export function seedQuestions(): Question[] {
 
 export function seedProjectIssues(): Issue[] {
   return [
-    { level: 'error', code: 'missing_numbers', message: 'سؤال شماره‌ی ۸ در دفترچه پیدا نشد.', field: null },
-    { level: 'warning', code: 'count_mismatch', message: 'تعداد سؤال‌های یافته‌شده (۱۰) با الگوی آزمون (۱۲) هم‌خوانی ندارد.', field: null },
+    { level: 'error', code: 'missing_numbers', message: 'سؤال‌های یافت‌نشده: ۸', field: null },
+    { level: 'warning', code: 'count_mismatch', message: 'تعداد سؤال‌های یافته‌شده (۱۰) با الگوی آزمون (۱۴۰) هم‌خوانی ندارد.', field: null },
   ];
 }
 
 export function makeReadyProject(id: string, title: string, createdAt: string): Project {
   return {
-    id, title, track: 'bar', year: 1403, blueprint: 'mock-12', engine: 'auto', created_at: createdAt,
+    id, title, track: 'bar', year: 1403, blueprint: 'BAR-1405', engine: 'auto', created_at: createdAt,
     status: 'ready', progress: { stage: 'done', done: 3, total: 3 }, error: null,
     documents: [
       { kind: 'booklet', filename: 'kanoon-1403-camscanner.pdf', page_count: pageCount('booklet') },

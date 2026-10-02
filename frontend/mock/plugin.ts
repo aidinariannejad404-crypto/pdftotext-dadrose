@@ -122,7 +122,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
     return send(res, 200, { ok: true }), true;
   }
   if (path === '/api/health') {
-    return send(res, 200, { ok: true, engines: { offline: true, claude: true, gemini: false }, default_engine: 'claude' }), true;
+    return send(res, 200, { ok: true, engines: { offline: true, claude: true, gemini: false }, default_engine: 'claude', push_configured: false }), true;
   }
   if (path === '/api/meta') return send(res, 200, META), true;
 
@@ -217,6 +217,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
         q.key_source = 'manual';
       }
       if (upd.status != null) q.status = upd.status;
+      if (upd.flags != null) q.flags = upd.flags;
       if (upd.stem != null || upd.options != null || upd.explanation != null) q.edited = true;
       q.issues = validateQuestion(q, hasExpl(p));
       return send(res, 200, q), true;
@@ -255,16 +256,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
     return true;
   }
 
-  if (rest === '/push' && method === 'POST') {
-    const { only_approved } = await json<{ only_approved: boolean }>(req);
-    await delay(600);
-    const n = p.questions.filter((q) => !only_approved || q.status === 'approved').length;
-    if (!only_approved && p.questions.some((q) => q.issues.some((i) => i.level === 'error'))) {
-      return send(res, 400, { detail: 'برخی سؤال‌ها خطا دارند؛ ابتدا آن‌ها را اصلاح کنید یا فقط تأییدشده‌ها را ارسال کنید.' }), true;
-    }
-    return send(res, 200, { ok: true, response: { created: n, updated: 0, skipped: 0 } }), true;
+  if (rest === '/export.docx' && method === 'GET') {
+    // Dummy bytes standing in for the «ورود هوشمند از ورد» template document.
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="dadrose-${p.id}.docx"`);
+    res.end(Buffer.from('PK\u0003\u0004 mock docx — not a real Word file'));
+    return true;
   }
 
+  if (rest === '/push' && method === 'POST') {
+    return send(res, 400, { detail: 'اتصال به سایت پیکربندی نشده است (DADROSE_API_URL / DADROSE_API_TOKEN).' }), true;
+  }
   return send(res, 405, { detail: 'متد پشتیبانی نمی‌شود.' }), true;
 }
 

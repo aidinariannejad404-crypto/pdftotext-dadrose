@@ -1,9 +1,9 @@
 """File-system persistence: one directory per project.
 
-    data/projects/<id>/project.json        Project (questions, issues, status)
-    data/projects/<id>/<kind>.pdf          uploaded file
-    data/projects/<id>/ocr-<kind>.json     DocumentResult (raw OCR lines)
-    data/projects/<id>/pages/<kind>-<i>.jpg processed page (+ -orig.jpg)
+data/projects/<id>/project.json        Project (questions, issues, status)
+data/projects/<id>/<kind>.pdf          uploaded file
+data/projects/<id>/ocr-<kind>.json     DocumentResult (raw OCR lines)
+data/projects/<id>/pages/<kind>-<i>.jpg processed page (+ -orig.jpg)
 """
 
 from __future__ import annotations
@@ -96,4 +96,3 @@ def _atomic_write(path: Path, text: str) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(text, "utf-8")
     os.replace(tmp, path)
-

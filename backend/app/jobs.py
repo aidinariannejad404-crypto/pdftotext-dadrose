@@ -16,7 +16,9 @@ class JobRunner:
     def __init__(self, store: Store, settings: Settings) -> None:
         self.store = store
         self.settings = settings
-        self.pool = ThreadPoolExecutor(max_workers=max(1, settings.workers), thread_name_prefix="job")
+        self.pool = ThreadPoolExecutor(
+            max_workers=max(1, settings.workers), thread_name_prefix="job"
+        )
 
     def submit(self, project_id: str) -> None:
         self.pool.submit(self._run, project_id)

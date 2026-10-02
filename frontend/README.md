@@ -18,9 +18,15 @@ npm run screenshots  # writes screenshots/*.png (desktop 1440 / mobile 390, dark
 
 Playwright uses the pre-installed Chromium (`PLAYWRIGHT_BROWSERS_PATH`); `@playwright/test` is pinned to 1.56.1 to match it. Set `PW_CHROMIUM=/path/to/chrome` to use another binary.
 
+## UX flow (for non-technical admins)
+
+1. Projects page: dismissible 3-step guide (remembered in localStorage), simplified upload — booklet file(s) + آزمون + سال are required; PDFs and/or page photos (JPG/PNG/HEIC…, several files, reorderable = page order); title and blueprint are auto-filled (blueprint/engine live under «تنظیمات پیشرفته»). The submit button explains what is missing.
+2. Review: actionable issue sentences (click → focuses the field), suspicious-word cards («X یا Y؟» → keep / use alternative, persisted via `PUT … {flags}`), «خطای بعدی» (F8 / Alt+N), help dialog (`?`), completion card with the Word download + import steps.
+3. Export: «دانلود فایل Word» (`/export.docx`, the site's «ورود هوشمند از ورد» template) is the primary action; JSON and direct push live in «بیشتر» (push disabled unless `health.push_configured`).
+
 ## Mock (`mock/`)
 
-`vite --mode mock` registers `mock/plugin.ts` as dev-server middleware implementing every endpoint in `docs/ARCHITECTURE.md` with in-memory state: one ready project (`demo`, 10 Persian questions, Q8 missing, flags/issues/explanations), one stuck in OCR, one failed. Uploads finish "processing" in ~9 s. Page images are SVGs generated from the same layout as the OCR word boxes, so overlays line up. `POST /api/__mock/reset` restores the seed.
+`vite --mode mock` registers `mock/plugin.ts` as dev-server middleware implementing every endpoint in `docs/ARCHITECTURE.md` with in-memory state: one ready project (`demo`, 10 Persian questions, Q8 missing, flags/issues/explanations), one stuck in OCR, one failed. Uploads (multiple files per field) finish "processing" in ~9 s; `export.docx` returns dummy bytes; `push_configured` is false. Page images are SVGs generated from the same layout as the OCR word boxes, so overlays line up. `POST /api/__mock/reset` restores the seed.
 
 ## Structure
 

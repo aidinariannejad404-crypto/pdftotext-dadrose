@@ -124,12 +124,14 @@ export interface QuestionUpdate {
   correct_key?: string | null;
   explanation?: string | null;
   status?: 'pending' | 'approved' | null;
+  flags?: Flag[] | null; // full remaining list after resolving suspicious words
 }
 
 export interface Health {
   ok: boolean;
   engines: { offline: boolean; claude: boolean; gemini: boolean };
   default_engine: string;
+  push_configured?: boolean;
 }
 
 export interface Blueprint {

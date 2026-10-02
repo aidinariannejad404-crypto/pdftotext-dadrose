@@ -16,7 +16,9 @@ interface Props {
   projectId: string;
   documents: DocInfo[];
   question: Question | null;
+  flags: Flag[]; // current (draft) suspicious words of the question
   activeFlagIndex: number | null;
+  hoverFlagIndex?: number | null;
   focus: FocusTarget | null; // scroll/switch request (question change, flag click)
   onWordClick: (word: Word, line: Line, doc: DocKind, page: number) => void;
 }
@@ -39,7 +41,9 @@ interface Hover {
   flagged: Flag | null;
 }
 
-export default function PageViewer({ projectId, documents, question, activeFlagIndex, focus, onWordClick }: Props) {
+export default function PageViewer({
+  projectId, documents, question, flags: allFlags, activeFlagIndex, hoverFlagIndex, focus, onWordClick,
+}: Props) {
   const docs = documents.filter((d) => d.page_count > 0);
   const [doc, setDoc] = useState<DocKind>(docs[0]?.kind ?? 'booklet');
   const [page, setPage] = useState(0);
@@ -150,10 +154,10 @@ export default function PageViewer({ projectId, documents, question, activeFlagI
   );
   const flags = useMemo(
     () =>
-      (question?.flags ?? [])
+      allFlags
         .map((f, i) => ({ f, i }))
         .filter(({ f }) => f.doc === doc && f.page === page && f.bbox),
-    [question, doc, page],
+    [allFlags, doc, page],
   );
   const flagForWord = (w: Word): Flag | null => flags.find(({ f }) => sameBox(f.bbox, w.bbox))?.f ?? null;
 
@@ -191,7 +195,7 @@ export default function PageViewer({ projectId, documents, question, activeFlagI
           </div>
         )}
         <div className="btn-group" role="group" aria-label="صفحه">
-          <button className="btn btn-sm btn-icon" onClick={() => goPage(page - 1)} disabled={page <= 0} aria-label="صفحه‌ی قبل">
+          <button className="btn btn-sm btn-icon" onClick={() => goPage(page - 1)} disabled={page <= 0} aria-label="صفحه‌ی قبل" title="صفحه‌ی قبل">
             <Icon name="chev-right" />
           </button>
           <span className="page-indicator" aria-live="polite">
@@ -202,18 +206,19 @@ export default function PageViewer({ projectId, documents, question, activeFlagI
             onClick={() => goPage(page + 1)}
             disabled={page >= pageCount - 1}
             aria-label="صفحه‌ی بعد"
+            title="صفحه‌ی بعد"
           >
             <Icon name="chev-left" />
           </button>
         </div>
         <div className="btn-group" role="group" aria-label="بزرگ‌نمایی">
-          <button className="btn btn-sm btn-icon" onClick={() => zoomBy(1 / 1.25)} aria-label="کوچک‌نمایی" disabled={zoom <= ZOOM_MIN}>
+          <button className="btn btn-sm btn-icon" onClick={() => zoomBy(1 / 1.25)} aria-label="کوچک‌نمایی" title="کوچک‌نمایی (Ctrl + چرخ ماوس)" disabled={zoom <= ZOOM_MIN}>
             <Icon name="zoom-out" />
           </button>
           <button className="btn btn-sm zoom-label" onClick={() => setZoom(1)} title="هم‌عرض صفحه" aria-label="هم‌عرض صفحه">
             {zoom === 1 ? <Icon name="fit" /> : `${fa(Math.round(zoom * 100))}٪`}
           </button>
-          <button className="btn btn-sm btn-icon" onClick={() => zoomBy(1.25)} aria-label="بزرگ‌نمایی" disabled={zoom >= ZOOM_MAX}>
+          <button className="btn btn-sm btn-icon" onClick={() => zoomBy(1.25)} aria-label="بزرگ‌نمایی" title="بزرگ‌نمایی (Ctrl + چرخ ماوس)" disabled={zoom >= ZOOM_MAX}>
             <Icon name="zoom-in" />
           </button>
         </div>
@@ -266,7 +271,7 @@ export default function PageViewer({ projectId, documents, question, activeFlagI
                   {flags.map(({ f, i }) => (
                     <div
                       key={`f${i}`}
-                      className={cx('ov-flag', `ov-flag-${f.reason}`, activeFlagIndex === i && 'is-active')}
+                      className={cx('ov-flag', `ov-flag-${f.reason}`, activeFlagIndex === i && 'is-active', hoverFlagIndex === i && 'is-hover')}
                       style={boxStyle(f.bbox!)}
                       data-testid="ov-flag"
                     />

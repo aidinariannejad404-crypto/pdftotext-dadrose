@@ -19,7 +19,7 @@ class Settings(BaseSettings):
 
     # ---- rendering / offline OCR
     render_dpi: int = 300
-    tesseract_lang: str = "fas+eng"
+    tesseract_lang: str = "fas"  # fas+eng measured worse: Persian words misread as Latin
     tesseract_cmd: str = "tesseract"
     # Directory with tessdata_best models (much more accurate for Persian). Empty = system default.
     tessdata_dir: str = ""
