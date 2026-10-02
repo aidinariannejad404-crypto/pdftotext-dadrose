@@ -69,6 +69,26 @@ export interface Issue {
   field: string | null;
 }
 
+export type ClassSource = 'text' | 'heading' | 'blueprint' | 'rules' | 'ai' | 'manual' | 'default';
+
+export interface ArticleRef {
+  law_key: string | null;
+  law: string;
+  kind: 'ماده' | 'اصل';
+  number: string;
+  clause: string;
+  source: ClassSource;
+  field?: string | null;
+}
+
+export interface Classification {
+  subject_source: ClassSource | null;
+  subject_confidence: number | null;
+  topic_source: ClassSource | null;
+  topic_confidence: number | null;
+  section_path: string[];
+}
+
 export interface Option {
   key: string;
   text: string;
@@ -83,6 +103,9 @@ export interface Question {
   key_source: 'table' | 'explanation' | 'inline' | 'manual' | null;
   explanation: string;
   source_ref?: string;
+  topic?: string;
+  articles?: ArticleRef[];
+  classification?: Classification;
   regions: Region[];
   flags: Flag[];
   issues: Issue[];
@@ -146,6 +169,8 @@ export interface QuestionUpdate {
   correct_key?: string | null;
   explanation?: string | null;
   source_ref?: string | null;
+  topic?: string | null;
+  articles?: ArticleRef[] | null;
   status?: 'pending' | 'approved' | null;
   flags?: Flag[] | null; // full remaining list after resolving suspicious words
 }
@@ -170,10 +195,20 @@ export interface Subject {
   name: string;
 }
 
+export interface Law {
+  key: string;
+  name: string;
+  subject_key: string | null;
+}
+
 export interface Meta {
   blueprints: Blueprint[];
   subjects: Subject[];
+  topics?: Record<string, string[]>;
+  laws?: Law[];
 }
+
+export type ClassifyEngine = 'rules' | 'auto' | 'claude' | 'gemini';
 
 export interface PushResult {
   ok: boolean;

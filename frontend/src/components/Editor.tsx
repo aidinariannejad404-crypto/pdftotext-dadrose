@@ -1,8 +1,8 @@
 import { useId, useState, type ReactNode } from 'react';
-import { useAppData } from '../appData';
 import type { Flag, Issue, Question } from '../types';
 import type { Draft, SaveState } from '../useDraft';
 import { KEY_SOURCE_LABELS, computeMarks, cx, fa, fieldLabel, getFieldText, issueAction, issueTarget, type MarkRange } from '../util';
+import ClassificationSection from './Classification';
 import HighlightField from './HighlightField';
 import { Icon } from './Icons';
 
@@ -237,7 +237,6 @@ export default function Editor(props: Props) {
     onReocr, onDelete, onAdd, onPrev, onNext, hasPrev, hasNext, onFlagClick, onFlagHover, onResolveFlag, onDropFlags, onIssueClick,
     register, index, total, reocrBusy, hasExplanations, nextProblem, banner,
   } = props;
-  const { meta } = useAppData();
   const uid = useId();
   const approved = q.status === 'approved';
   const flags = draft.flags;
@@ -261,8 +260,6 @@ export default function Editor(props: Props) {
   const sorted = [...listed.filter((i) => i.level === 'error'), ...listed.filter((i) => i.level === 'warning')];
 
   const markClick = (m: MarkRange) => onFlagClick(m.flag, m.flagIndex);
-  const subjects = meta?.subjects ?? [];
-  const knownSubject = !draft.subject_key || subjects.some((s) => s.key === draft.subject_key);
   const keyIssues = issuesFor('key');
 
   return (
@@ -290,25 +287,6 @@ export default function Editor(props: Props) {
           )}
         </div>
         <div className="editor-head-tools">
-          <label className="subject-select" title="درس این سؤال">
-            <span className="visually-hidden">درس</span>
-            <select
-              id={`${uid}-subject`}
-              data-field="subject"
-              className={cx('input input-sm', !draft.subject_key && 'is-warning', hasErrorAt('subject') && 'is-invalid')}
-              value={draft.subject_key ?? ''}
-              onChange={(e) => onChange({ subject_key: e.target.value || null }, true)}
-              aria-label="درس"
-            >
-              <option value="">— درس را انتخاب کنید —</option>
-              {!knownSubject && <option value={draft.subject_key!}>{draft.subject_key}</option>}
-              {subjects.map((x) => (
-                <option key={x.key} value={x.key}>
-                  {x.name}
-                </option>
-              ))}
-            </select>
-          </label>
           <SaveIndicator state={saveState} onRetry={onSave} />
           <NextProblemButton np={nextProblem} className="btn-sm hide-mobile" />
         </div>
@@ -329,6 +307,14 @@ export default function Editor(props: Props) {
             ))}
           </ul>
         )}
+
+        <ClassificationSection
+          draft={draft}
+          classification={q.classification}
+          onChange={onChange}
+          onBlur={onBlurField}
+          subjectInvalid={hasErrorAt('subject')}
+        />
 
         <FlagsPanel
           draft={draft}

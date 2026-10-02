@@ -1,5 +1,5 @@
 import type {
-  DocKind, EngineName, Health, Meta, PageResult, PageText, PageTextUpdate, Project, ReviewMode, ProjectSummary, PushResult, Question, QuestionUpdate,
+  ClassifyEngine, DocKind, EngineName, Health, Meta, PageResult, PageText, PageTextUpdate, Project, ReviewMode, ProjectSummary, PushResult, Question, QuestionUpdate,
 } from './types';
 
 export class ApiError extends Error {
@@ -70,6 +70,8 @@ export const api = {
     request<PageText>('GET', `/api/projects/${enc(id)}/pages/${doc}/${page}/text`),
   updatePageText: (id: string, doc: DocKind, page: number, upd: PageTextUpdate) =>
     request<PageText>('PUT', `/api/projects/${enc(id)}/pages/${doc}/${page}/text`, upd),
+  classify: (id: string, engine: ClassifyEngine, numbers?: number[]) =>
+    request<Project>('POST', `/api/projects/${enc(id)}/classify`, numbers ? { engine, numbers } : { engine }),
   setMode: (id: string, mode: ReviewMode) => request<Project>('POST', `/api/projects/${enc(id)}/mode`, { mode }),
   push: (id: string, onlyApproved: boolean) =>
     request<PushResult>('POST', `/api/projects/${enc(id)}/push`, { only_approved: onlyApproved }),

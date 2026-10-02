@@ -1,10 +1,11 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useAppData } from '../appData';
 import type { Issue, Question } from '../types';
-import { cx, fa, percent, questionState, type QState } from '../util';
+import { articleLabel, cx, fa, percent, questionState, searchable, type QState } from '../util';
 import { Icon } from './Icons';
 
 export type NavFilter = 'all' | 'problems' | 'pending';
+export type GroupBy = 'subject' | 'topic' | 'article';
 
 const STATE_LABEL: Record<QState, string> = {
   approved: 'تأییدشده',
@@ -28,18 +29,62 @@ export default function Navigator({ questions, current, onSelect, filter, onFilt
   const approved = questions.filter((q) => q.status === 'approved').length;
   const pct = percent(approved, questions.length);
 
-  const visible = useMemo(
-    () =>
-      questions.filter((q) => {
-        const s = questionState(q);
-        if (filter === 'problems') return s === 'error' || s === 'warning';
-        if (filter === 'pending') return s !== 'approved';
-        return true;
-      }),
-    [questions, filter],
-  );
+  const [groupBy, setGroupBy] = useState<GroupBy>('subject');
+  const [query, setQuery] = useState('');
+
+  const visible = useMemo(() => {
+    const qn = searchable(query.trim());
+    return questions.filter((q) => {
+      const s = questionState(q);
+      if (filter === 'problems' && s !== 'error' && s !== 'warning') return false;
+      if (filter === 'pending' && s === 'approved') return false;
+      if (!qn) return true;
+      if (/^\d+$/.test(qn)) {
+        // a bare number: question number or article number
+        if (String(q.number) === qn) return true;
+        if ((q.articles ?? []).some((a) => searchable(a.number).split(/\s/)[0] === qn)) return true;
+      }
+      const hay = searchable(
+        [q.stem, q.topic ?? '', ...q.options.map((o) => o.text), ...(q.articles ?? []).map((a) => `${a.kind} ${a.number} ${a.law}`)].join(' '),
+      );
+      return hay.includes(qn);
+    });
+  }, [questions, filter, query]);
 
   const groups = useMemo(() => {
+    const byNumber = (a: Question, b: Question) => a.number - b.number;
+    if (groupBy === 'topic') {
+      const map = new Map<string, Question[]>();
+      for (const q of visible) {
+        const k = (q.topic ?? '').trim();
+        if (!map.has(k)) map.set(k, []);
+        map.get(k)!.push(q);
+      }
+      return [...map.entries()]
+        .map(([key, qs]) => ({ key, title: key || 'بدون مبحث', qs: qs.sort(byNumber), first: Math.min(...qs.map((q) => q.number)) }))
+        .sort((a, b) => (!a.key ? 1 : !b.key ? -1 : a.first - b.first));
+    }
+    if (groupBy === 'article') {
+      const map = new Map<string, { title: string; law: string; num: number; qs: Question[] }>();
+      for (const q of visible) {
+        const arts = q.articles ?? [];
+        if (!arts.length) {
+          if (!map.has('')) map.set('', { title: 'بدون ماده', law: '\uffff', num: 0, qs: [] });
+          map.get('')!.qs.push(q);
+        }
+        for (const a of arts) {
+          const key = `${a.law_key ?? a.law}|${a.kind}|${searchable(a.number)}`;
+          if (!map.has(key)) {
+            map.set(key, { title: articleLabel({ ...a, clause: '' }), law: a.law, num: parseInt(searchable(a.number), 10) || 0, qs: [] });
+          }
+          const g = map.get(key)!;
+          if (!g.qs.includes(q)) g.qs.push(q);
+        }
+      }
+      return [...map.entries()]
+        .map(([key, g]) => ({ key, title: g.title, qs: g.qs.sort(byNumber), law: g.law, num: g.num, first: 0 }))
+        .sort((a, b) => a.law.localeCompare(b.law, 'fa') || a.num - b.num);
+    }
     const order = new Map((meta?.subjects ?? []).map((s, i) => [s.key, i]));
     const map = new Map<string, Question[]>();
     for (const q of visible) {
@@ -48,7 +93,7 @@ export default function Navigator({ questions, current, onSelect, filter, onFilt
       map.get(k)!.push(q);
     }
     return [...map.entries()]
-      .map(([key, qs]) => ({ key, qs: qs.sort((a, b) => a.number - b.number), first: Math.min(...qs.map((q) => q.number)) }))
+      .map(([key, qs]) => ({ key, title: subjectName(key || null), qs: qs.sort(byNumber), first: Math.min(...qs.map((q) => q.number)) }))
       .sort((a, b) => {
         if (!a.key) return 1;
         if (!b.key) return -1;
@@ -56,7 +101,7 @@ export default function Navigator({ questions, current, onSelect, filter, onFilt
         const ob = order.get(b.key) ?? 999;
         return oa - ob || a.first - b.first;
       });
-  }, [visible, meta]);
+  }, [visible, meta, groupBy, subjectName]);
 
   const counts = useMemo(() => {
     let problems = 0;
@@ -114,12 +159,44 @@ export default function Navigator({ questions, current, onSelect, filter, onFilt
         ))}
       </div>
 
+      <div className="nav-tools">
+        <input
+          type="search"
+          className="input input-sm"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="جست‌وجو: متن، مبحث، شماره‌ی ماده…"
+          aria-label="جست‌وجو در سؤال‌ها"
+          data-testid="nav-search"
+        />
+        <div className="segmented segmented-sm" role="radiogroup" aria-label="گروه‌بندی بر اساس">
+          {(
+            [
+              ['subject', 'درس'],
+              ['topic', 'مبحث'],
+              ['article', 'ماده'],
+            ] as const
+          ).map(([k, label]) => (
+            <button
+              key={k}
+              role="radio"
+              aria-checked={groupBy === k}
+              className={cx('seg', groupBy === k && 'is-on')}
+              onClick={() => setGroupBy(k)}
+              data-testid={`group-${k}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="nav-groups">
-        {groups.length === 0 && <div className="muted small empty">سؤالی با این فیلتر نیست.</div>}
+        {groups.length === 0 && <div className="muted small empty">سؤالی با این فیلتر یا جست‌وجو نیست.</div>}
         {groups.map((g) => (
-          <section key={g.key || '_none'} className="nav-group">
+          <section key={g.key || '_none'} className="nav-group" data-testid="nav-group">
             <h3 className="nav-group-title">
-              {subjectName(g.key || null)} <span className="muted">({fa(g.qs.length)})</span>
+              {g.title} <span className="muted">({fa(g.qs.length)})</span>
             </h3>
             <div className="qgrid">
               {g.qs.map((q) => {

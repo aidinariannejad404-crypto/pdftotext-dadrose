@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
-import type { Flag, Option, Question, QuestionUpdate } from './types';
+import type { ArticleRef, Flag, Option, Question, QuestionUpdate } from './types';
 
 export type SaveState = 'saved' | 'dirty' | 'saving' | 'error';
 
@@ -11,6 +11,8 @@ export interface Draft {
   correct_key: string | null;
   explanation: string;
   source_ref: string;
+  topic: string;
+  articles: ArticleRef[];
   flags: Flag[]; // remaining suspicious words (resolved ones are removed locally, then PUT)
 }
 
@@ -26,6 +28,8 @@ export function draftFrom(q: Question): Draft {
     correct_key: q.correct_key,
     explanation: q.explanation,
     source_ref: q.source_ref ?? '',
+    topic: q.topic ?? '',
+    articles: q.articles ?? [],
     flags: q.flags,
   };
 }
@@ -38,6 +42,8 @@ function toUpdate(d: Draft, withFlags: boolean): QuestionUpdate {
     correct_key: d.correct_key,
     explanation: d.explanation,
     source_ref: d.source_ref,
+    topic: d.topic,
+    articles: d.articles,
   };
   if (withFlags) u.flags = d.flags;
   return u;

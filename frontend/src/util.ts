@@ -278,3 +278,29 @@ export function isTypingTarget(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false;
   return el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
 }
+
+// ------------------------------------------------------------ classification
+
+export const CLASS_SOURCE_LABELS: Record<string, string> = {
+  text: 'از متن',
+  heading: 'از سرفصل',
+  blueprint: 'الگوی آزمون',
+  rules: 'کلیدواژه',
+  ai: 'هوش مصنوعی',
+  manual: 'دستی',
+  default: 'پیش‌فرض',
+};
+
+export function articleLabel(a: { kind: string; number: string; clause: string; law: string }): string {
+  const head = `${a.kind} ${fa(a.number)}${a.clause ? ` ${fa(a.clause)}` : ''}`;
+  return a.law ? `${head} · ${a.law}` : head;
+}
+
+/** Comparable form for search: ASCII digits, no ZWNJ/diacritics, lower-case. */
+export function searchable(s: string): string {
+  return toAsciiDigits(s)
+    .replace(/[\u200c\u064b-\u065f]/g, '')
+    .replace(/ي/g, 'ی')
+    .replace(/ك/g, 'ک')
+    .toLowerCase();
+}
