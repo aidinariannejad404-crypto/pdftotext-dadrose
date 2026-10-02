@@ -20,6 +20,9 @@ from __future__ import annotations
 
 import re
 
+import cv2
+import numpy as np
+
 from app.models import PageResult, Word
 from app.ocr.flags import is_malformed, known_words, learned_words, word_key
 
@@ -59,7 +62,9 @@ def _is_garbage(w: Word) -> bool:
     if _LATIN_RE.search(text) and _PERSIAN_RE.search(text):
         return True
     # Lone letters other than و (and) / option letters are typical segmentation debris.
-    return len(key) == 1 and _PERSIAN_RE.match(key) is not None and key not in "وبجد"
+    return (
+        len(key) == 1 and key.isalpha() and _PERSIAN_RE.match(key) is not None and key not in "وبجد"
+    )
 
 
 def page_quality(page: PageResult, ink_ratio: float | None = None) -> float:
@@ -93,10 +98,8 @@ def page_quality(page: PageResult, ink_ratio: float | None = None) -> float:
     return round(_clamp(score), 3)
 
 
-def ink_ratio(gray) -> float:  # noqa: ANN001 — numpy array; keep numpy out of the signature
+def ink_ratio(gray: np.ndarray) -> float:
     """Share of dark (ink) pixels of a gray page image (downscaled for speed)."""
-    import cv2
-
     h, w = gray.shape[:2]
     s = 800 / max(h, w)
     small = cv2.resize(gray, (max(1, int(w * s)), max(1, int(h * s)))) if s < 1 else gray

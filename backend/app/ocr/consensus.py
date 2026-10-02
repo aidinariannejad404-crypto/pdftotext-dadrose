@@ -14,6 +14,7 @@ from difflib import SequenceMatcher
 from app.models import BBox, Line, Word
 
 LOW_AGREEMENT = 0.40
+UNSURE_CONF = 60.0
 
 _DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 _CHARS = str.maketrans(
@@ -78,7 +79,15 @@ def _merge_near_identical(ai: list[str], tess: list[str]) -> bool:
     return comparable("".join(ai)) == comparable("".join(tess)) and bool(comparable("".join(ai)))
 
 
-def merge(ai_text: str, tess_lines: list[Line], page: int) -> tuple[list[Line], list[str]]:
+def merge(
+    ai_text: str, tess_lines: list[Line], page: int, trust_ai: bool = False
+) -> tuple[list[Line], list[str]]:
+    """Align `ai_text` onto Tesseract's words.
+
+    trust_ai: the offline reading is known to be poor (low page quality), so the AI text is
+    kept even when agreement is very low, and disagreements against unsure (conf < 60) or
+    missing Tesseract words are not flagged — only confident Tesseract readings dispute it.
+    """
     warnings: list[str] = []
     ai_lines = _tokenize_ai(ai_text)
     tess_words: list[Word] = [w for ln in tess_lines for w in ln.words]
@@ -166,6 +175,17 @@ def merge(ai_text: str, tess_lines: list[Line], page: int) -> tuple[list[Line], 
             warnings.append(f"احتمال جاافتادن یک سطر در متن هوش مصنوعی: «{ln.text[:60]}»")
 
     agreement = agreed / max(len(ai_flat), len(tess_words))
+    if trust_ai:
+        for ln in result:
+            for w in ln.words:
+                if w.flag == "disagree" and (not w.alt or (w.conf or 0) < UNSURE_CONF):
+                    w.flag = None
+        if agreement < LOW_AGREEMENT:
+            warnings.append(
+                f"خواندن آفلاین این صفحه قابل اتکا نبود (توافق {agreement:.0%})؛ "
+                "متن هوش مصنوعی استفاده شد."
+            )
+        return result, warnings
     if agreement < LOW_AGREEMENT:
         warnings.append(
             f"توافق متن هوش مصنوعی با Tesseract بسیار کم است ({agreement:.0%})؛ "

@@ -16,7 +16,7 @@ import pytest
 
 from app import pipeline
 from app.config import Settings
-from app.models import Line, Word
+from app.models import AiUsage, Line, Word
 from app.ocr import consensus, llm
 from app.ocr.consensus import comparable
 from app.ocr.tesseract import _to_lines, ocr_tesseract, tesseract_available
@@ -31,7 +31,7 @@ from tests import fixtures_gen as fg
 
 BEST = Path("/opt/tessdata_best")
 HAVE_BEST = (BEST / "fas.traineddata").is_file()
-TESS = Settings(tessdata_dir=str(BEST) if HAVE_BEST else "", tesseract_lang="fas")
+TESS = Settings(tessdata_dir=str(BEST) if HAVE_BEST else "", tesseract_lang="fas", ai_cache=False)
 
 needs_tesseract = pytest.mark.skipif(not tesseract_available(TESS), reason="tesseract+fas missing")
 
@@ -386,7 +386,7 @@ def _status_error(cls, status: int, msg: str):
     return cls(msg, response=httpx.Response(status, request=req), body=None)
 
 
-CLAUDE_SETTINGS = Settings(anthropic_api_key="sk-test", claude_effort="high")
+CLAUDE_SETTINGS = Settings(anthropic_api_key="sk-test", ai_ocr_effort="high")
 
 
 def test_claude_request_shape_and_fence_stripping() -> None:
@@ -398,19 +398,21 @@ def test_claude_request_shape_and_fence_stripping() -> None:
     assert call["betas"] == ["server-side-fallback-2026-07-01"]
     assert call["fallbacks"] == "default"
     assert call["output_config"] == {"effort": "high"}
-    assert call["max_tokens"] == 16000
-    assert not {"thinking", "temperature", "system"} & call.keys()
+    assert call["max_tokens"] == llm.MAX_TOKENS["page"]
+    assert call["system"] == llm.SYSTEM_OCR
+    assert not {"thinking", "temperature"} & call.keys()
     msgs = call["messages"]
     assert len(msgs) == 1 and msgs[0]["role"] == "user"
     img, txt = msgs[0]["content"]
     assert img["source"]["media_type"] == "image/jpeg" and img["source"]["data"] == "/9hqcGVn"
-    assert "رونویسی" in txt["text"]
+    assert txt["text"] == llm.USER_PAGE
 
 
 def test_claude_region_prompt() -> None:
     client, beta, _ = _fake_client([_fake_message("متن")])
     llm.ClaudeEngine(CLAUDE_SETTINGS, client=client).transcribe(b"x", "region")
-    assert "بریده" in beta.calls[0]["messages"][0]["content"][1]["text"]
+    assert "cropped" in beta.calls[0]["messages"][0]["content"][1]["text"]
+    assert beta.calls[0]["max_tokens"] == llm.MAX_TOKENS["region"]
 
 
 def test_claude_refusal_raises() -> None:
@@ -467,7 +469,8 @@ def test_gemini_request_and_response() -> None:
     assert seen["key"] == "g-key"
     parts = seen["body"]["contents"][0]["parts"]
     assert parts[0]["inline_data"]["mime_type"] == "image/jpeg"
-    assert seen["body"]["generationConfig"] == {"temperature": 0}
+    assert seen["body"]["generationConfig"] == {"temperature": 0, "maxOutputTokens": 8000}
+    assert seen["body"]["systemInstruction"]["parts"][0]["text"] == llm.SYSTEM_OCR
 
 
 def test_gemini_http_error() -> None:
@@ -500,12 +503,18 @@ class _FakeAi:
     def __init__(self, text: str | None = None, fail: bool = False) -> None:
         self.text, self.fail, self.calls = text, fail, []
 
-    def transcribe(self, jpeg: bytes, mode: str = "page") -> str:
+    model = "fake-1"
+
+    def transcribe_ex(self, jpeg: bytes, mode: str = "page") -> llm.AiResult:
         self.calls.append(mode)
         assert jpeg[:2] == b"\xff\xd8"
         if self.fail:
             raise llm.AiEngineError("سرویس در دسترس نیست")
-        return self.text or ""
+        return llm.AiResult(text=self.text or "", usage=AiUsage(calls=1, input_tokens=10))
+
+    def correct(self, jpeg: bytes, lines: list[str]) -> llm.AiResult:
+        self.calls.append("correct")
+        return llm.AiResult(usage=AiUsage(calls=1))
 
 
 def test_process_document_text_layer(tmp_path: Path) -> None:
