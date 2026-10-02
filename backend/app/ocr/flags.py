@@ -15,6 +15,7 @@ Tesseract's per-word confidence alone flags far too many correct Persian words
 from __future__ import annotations
 
 import re
+import threading
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
@@ -46,6 +47,65 @@ def _key(text: str) -> str:
     return text.replace("ي", "ی").replace("ك", "ک").replace("‌", "")
 
 
+_learned_path: Path | None = None
+_learned_cache: tuple[float, frozenset[str]] = (-1.0, frozenset())
+_learned_lock = threading.Lock()
+
+
+def set_learned_path(path: Path | None) -> None:
+    """Where words confirmed by admins are stored (one per line, normalized)."""
+    global _learned_path, _learned_cache
+    _learned_path = path
+    _learned_cache = (-1.0, frozenset())
+
+
+def learned_words() -> frozenset[str]:
+    global _learned_cache
+    path = _learned_path
+    if path is None or not path.is_file():
+        return frozenset()
+    mtime = path.stat().st_mtime
+    if mtime != _learned_cache[0]:
+        words = frozenset(w for w in path.read_text("utf-8").split() if w)
+        _learned_cache = (mtime, words)
+    return _learned_cache[1]
+
+
+def learn_words(texts_before: list[str], texts_after: list[str]) -> int:
+    """Remember words an admin typed in (present after an edit but not before).
+
+    Admin corrections are authoritative, so these words are never flagged again —
+    fewer suspicious words means fewer AI correction calls next time.
+    """
+    if _learned_path is None:
+        return 0
+    before = {word_key(w) for t in texts_before for w in t.split()}
+    new = (
+        {
+            word_key(w)
+            for t in texts_after
+            for w in t.split()
+            if len(word_key(w)) >= 2 and not is_malformed(w)
+        }
+        - before
+        - known_words()
+        - learned_words()
+    )
+    new.discard("")
+    if not new:
+        return 0
+    with _learned_lock:
+        _learned_path.parent.mkdir(parents=True, exist_ok=True)
+        with _learned_path.open("a", encoding="utf-8") as fh:
+            fh.write("\n".join(sorted(new)) + "\n")
+    return len(new)
+
+
+def word_key(text: str) -> str:
+    """Normalized form used by the lexicons (public alias of `_key`)."""
+    return _key(text)
+
+
 @lru_cache(maxsize=1)
 def known_words() -> frozenset[str]:
     words: set[str] = set()
@@ -68,11 +128,15 @@ def is_malformed(text: str) -> bool:
 def refine_low_conf_flags(doc: DocumentResult) -> int:
     """Recompute `low_conf` flags in place. Returns the number of flagged words."""
     words: list[Word] = [w for p in doc.pages for line in p.lines for w in line.words]
-    trusted = set(known_words()) | {
-        _key(w.text)
-        for w in words
-        if w.conf is not None and w.conf >= TRUSTED_CONF and not is_malformed(w.text)
-    }
+    trusted = (
+        set(known_words())
+        | learned_words()
+        | {
+            _key(w.text)
+            for w in words
+            if w.conf is not None and w.conf >= TRUSTED_CONF and not is_malformed(w.text)
+        }
+    )
     flagged = 0
     for word in words:
         if word.flag == "disagree" or word.conf is None:

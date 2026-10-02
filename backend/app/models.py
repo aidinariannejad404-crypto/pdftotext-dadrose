@@ -42,6 +42,21 @@ class Line(BaseModel):
         return " ".join(w.text for w in self.words)
 
 
+class AiUsage(BaseModel):
+    """AI cost accounting (tokens as reported by the provider)."""
+
+    calls: int = 0
+    cached: int = 0  # answers served from the local AI cache (no cost)
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    def add(self, other: AiUsage) -> None:
+        self.calls += other.calls
+        self.cached += other.cached
+        self.input_tokens += other.input_tokens
+        self.output_tokens += other.output_tokens
+
+
 class PageResult(BaseModel):
     index: int
     width: int  # processed image size in pixels
@@ -54,6 +69,10 @@ class PageResult(BaseModel):
     # Full-text mode: the admin's corrected text of this page (None = not edited yet).
     edited_text: str | None = None
     approved: bool = False
+    # How the AI was used on this page: none | correct (only suspicious lines) | transcribe
+    ai_mode: Literal["none", "correct", "transcribe"] = "none"
+    quality: float | None = None  # offline OCR quality score 0..1 that drove the decision
+    ai_usage: AiUsage = Field(default_factory=AiUsage)
 
 
 class DocumentResult(BaseModel):
@@ -167,7 +186,9 @@ class ProjectStats(BaseModel):
     ocr_seconds: float = 0.0
     parse_seconds: float = 0.0
     engine: str = ""  # engine actually used, e.g. "claude+tesseract"
-    ai_pages: int = 0  # pages sent to an AI engine (cost driver)
+    ai_pages: int = 0  # pages where an AI engine was used (correct or transcribe)
+    ai_usage: AiUsage = Field(default_factory=AiUsage)
+    ai_cost_usd: float = 0.0  # estimate from the configured per-token prices
 
 
 class DocInfo(BaseModel):

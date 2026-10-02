@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
 from .config import Settings
-from .models import DocKind, DocumentResult, Project
+from .models import DocKind, DocumentResult, Project, ProjectStats
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -80,9 +80,7 @@ class JobRunner:
             total = sum(d.page_count for d in project.documents)
             done_before = 0
             started = time.monotonic()
-            stats = project.stats.model_copy(
-                update={"pages": total, "started_at": datetime.now(UTC), "ai_pages": 0}
-            )
+            stats = ProjectStats(pages=total, started_at=datetime.now(UTC))
             self._set_progress(project_id, "ocr", 0, total, status="processing", stats=stats)
             engines: set[str] = set()
             out_dir = self.store.pages_dir(project_id)
@@ -107,8 +105,10 @@ class JobRunner:
                 done_before += info.page_count
                 for page in doc.pages:
                     engines.add(page.engine)
-                    stats.ai_pages += "+" in page.engine  # e.g. "claude+tesseract"
+                    stats.ai_pages += page.ai_mode != "none"
+                    stats.ai_usage.add(page.ai_usage)
 
+            stats.ai_cost_usd = ai_cost(stats.ai_usage, project.engine, self.settings)
             stats.ocr_seconds = round(time.monotonic() - started, 1)
             stats.engine = " / ".join(sorted(engines))
             self._set_progress(project_id, "parsing", total, total, stats=stats)
@@ -187,6 +187,17 @@ class JobRunner:
 
     def load_doc(self, project_id: str, kind: DocKind) -> DocumentResult | None:
         return self.store.load_document(project_id, kind)
+
+
+def ai_cost(usage, engine: str, settings: Settings) -> float:
+    """USD estimate from the configured per-million-token prices."""
+    provider = settings.default_ai_engine if engine in ("auto", "offline") else engine
+    if provider == "gemini":
+        price_in, price_out = settings.gemini_price_in, settings.gemini_price_out
+    else:
+        price_in, price_out = settings.claude_price_in, settings.claude_price_out
+    cost = (usage.input_tokens * price_in + usage.output_tokens * price_out) / 1_000_000
+    return round(cost, 4)
 
 
 def _detect_mode(result) -> str:

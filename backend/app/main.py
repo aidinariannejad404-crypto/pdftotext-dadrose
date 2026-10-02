@@ -43,6 +43,9 @@ jobs = JobRunner(store, settings)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    from .ocr.flags import set_learned_path
+
+    set_learned_path(settings.data_dir / "learned_words.txt")
     jobs.resume_pending()
     yield
     jobs.shutdown()
@@ -404,8 +407,16 @@ def update_question(project_id: str, number: int, update: QuestionUpdate):
             for key in update.model_dump(exclude_unset=True)
             if getattr(question, key) != getattr(update, key)
         }
+        before_texts = [question.stem, question.explanation, *(o.text for o in question.options)]
         for key in changed:
             setattr(question, key, getattr(update, key))
+        if changed & {"stem", "options", "explanation"}:
+            from .ocr.flags import learn_words
+
+            learn_words(
+                before_texts,
+                [question.stem, question.explanation, *(o.text for o in question.options)],
+            )
         if "correct_key" in changed:
             question.key_source = "manual"
         if "subject_key" in changed:

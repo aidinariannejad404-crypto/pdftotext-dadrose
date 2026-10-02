@@ -56,3 +56,18 @@ def test_document_lexicon_and_thresholds():
 def test_malformed_shapes():
     assert is_malformed("جزء۶") and is_malformed("در:تعریف") and is_malformed("قَائُم")
     assert is_malformed("اين") and not is_malformed("این،") and not is_malformed("«د»")
+
+
+def test_admin_corrections_are_learned(tmp_path):
+    from app.ocr import flags
+
+    flags.set_learned_path(tmp_path / "learned.txt")
+    try:
+        assert flags.learn_words(["تاجر مستاجرین زرتقان"], ["تاجر مستاجرین زرتقانی"]) == 1
+        assert "زرتقانی" in flags.learned_words()
+        doc = _doc([Word(text="زرتقانی", conf=45)])
+        refine_low_conf_flags(doc)
+        assert doc.pages[0].lines[0].words[0].flag is None  # learned → trusted
+        assert flags.learn_words(["x"], ["زرتقانی"]) == 0  # already known
+    finally:
+        flags.set_learned_path(None)

@@ -38,6 +38,22 @@ class Settings(BaseSettings):
     default_ai_engine: str = "claude"
     ai_timeout_seconds: float = 180.0
 
+    # ---- AI token economy. Engine "auto" = smart: offline first, AI only where it fails.
+    # Pages whose offline quality score (0..1) is below this get a full AI transcription;
+    # better pages only send their suspicious lines for correction.
+    page_ai_threshold: float = 0.6
+    # Effort for OCR / correction / classification calls (thinking tokens are billed).
+    ai_ocr_effort: str = "low"
+    # Hard cap of AI calls per project; beyond it the project continues offline.
+    ai_max_calls_per_project: int = 150
+    # Re-use earlier AI answers for identical inputs (reprocessing, duplicate pages).
+    ai_cache: bool = True
+    # Price estimates (USD per million tokens) for the cost shown in the UI.
+    claude_price_in: float = 4.0
+    claude_price_out: float = 20.0
+    gemini_price_in: float = 0.3
+    gemini_price_out: float = 2.5
+
     # ---- DADROSE site integration
     dadrose_api_url: str = ""  # e.g. https://api.dadrose.com
     dadrose_api_token: str = ""
