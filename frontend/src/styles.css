@@ -3342,3 +3342,71 @@ kbd {
     margin-inline-start: 4px;
   }
 }
+
+/* ===================================================== round 7: AI usage */
+.read-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--surface-3);
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: help;
+}
+.read-correct {
+  background: var(--success-soft);
+  color: var(--success);
+}
+.read-transcribe {
+  background: var(--info-soft);
+  color: var(--info);
+}
+.read-q {
+  font-weight: 500;
+  opacity: 0.8;
+}
+.ov-word-ai {
+  box-shadow: inset 0 -2px 0 rgba(27, 110, 69, 0.75);
+}
+.word-tip-ai {
+  margin-top: 3px;
+  color: #7fdcaa;
+}
+.ai-modes {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.mode-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-inline-end: 4px;
+  background: var(--border-strong);
+}
+.mode-correct {
+  background: var(--success);
+}
+.mode-transcribe {
+  background: var(--info);
+}
+.ai-table {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.ai-table td {
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.ai-table td:last-child {
+  font-weight: 700;
+}

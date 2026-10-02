@@ -419,7 +419,9 @@ test('auto-classify dialog fills missing topics and keeps manual ones; stats', a
   await page.getByTestId('more-menu').click();
   await page.getByTestId('menu-classify').click();
   await expect(page.getByRole('dialog')).toContainText('دست نمی‌خورند');
-  await expect(page.getByRole('radio', { name: /Gemini/ })).toBeDisabled();
+  await expect(page.getByRole('radio', { name: /Gemini|Claude/ })).toHaveCount(0);
+  await expect(page.getByRole('radio', { name: 'فقط قواعد (رایگان)' })).toBeChecked();
+  await expect(page.getByRole('radio', { name: /هوشمند: هوش مصنوعی فقط برای سؤال‌های نامطمئن/ })).toBeEnabled();
   await page.getByTestId('scope-missing').check();
   await page.getByTestId('confirm-classify').click();
   await expect(page.getByText(/طبقه‌بندی انجام شد/)).toBeVisible();
@@ -574,4 +576,39 @@ test('bulk Word download is one ZIP; nothing approved → Persian error', async 
   await page.getByRole('checkbox', { name: 'انتخاب آزمون کانون وکلا ۱۴۰۳' }).check();
   const [dl] = await Promise.all([page.waitForEvent('download'), page.getByTestId('bulk-word').click()]);
   expect(dl.suggestedFilename()).toMatch(/\.zip$/);
+});
+
+test('AI usage: engine wording, usage lines, page read badge, AI-corrected word, stats', async ({ page }) => {
+  await page.goto('/#/');
+  await page.locator('summary', { hasText: 'تنظیمات پیشرفته' }).click();
+  const engine = page.getByTestId('engine-select');
+  await expect(engine).toHaveValue('auto');
+  await expect(engine.locator('option[value="auto"]')).toHaveText(/هوشمند \(پیشنهادی\): آفلاین، و هوش مصنوعی فقط برای بخش‌های مشکل‌دار/);
+  await expect(engine.locator('option[value="offline"]')).toHaveText('فقط آفلاین (رایگان)');
+  await expect(engine.locator('option[value="claude"]')).toHaveText(/همیشه با Claude \(بیشترین دقت، بیشترین هزینه\)/);
+  await expect(page.getByTestId('engine-hint')).toContainText('فقط خطوط مشکوک');
+  await engine.selectOption('offline');
+  await expect(page.getByTestId('engine-hint')).toContainText('بدون هزینه');
+  const usage = 'هوش مصنوعی: ۲ صفحه · ۱۲٬۴۰۰ توکن · ≈ ۰٫۰۹ دلار · ۳ پاسخ از حافظه';
+  await expect(page.getByTestId('project-row').filter({ hasText: 'آزمون کانون وکلا ۱۴۰۳' }).getByTestId('project-ai')).toHaveText(usage);
+  // the text project used no AI → no usage line
+  await expect(page.getByTestId('project-row').filter({ hasText: 'بانک نکات' }).getByTestId('project-ai')).toHaveCount(0);
+
+  await page.goto('/#/p/demo?q=1');
+  await expect(page.getByTestId('ai-usage')).toContainText(usage);
+  const badge = page.getByTestId('read-badge');
+  await expect(badge).toContainText('اصلاح‌شده با هوش مصنوعی');
+  await expect(badge).toContainText('۷۱٪');
+  await page.locator('.ov-word-ai').first().hover();
+  await expect(page.getByTestId('word-tip-ai')).toContainText('اصلاح هوش مصنوعی:');
+  await page.getByRole('button', { name: 'صفحه‌ی بعد' }).click();
+  await expect(badge).toHaveText(/^آفلاین/);
+
+  await page.getByTestId('more-menu').click();
+  await page.getByTestId('menu-stats').click();
+  const ai = page.getByTestId('ai-stats');
+  await expect(ai).toContainText('اصلاح خطوط مشکوک: ۱ صفحه');
+  await expect(ai).toContainText('بازنویسی کامل: ۱ صفحه');
+  await expect(ai).toContainText('بدون نیاز (آفلاین): ۱ صفحه');
+  await expect(ai).toContainText('۹٬۸۰۰');
 });

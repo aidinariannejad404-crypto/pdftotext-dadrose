@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, exportZipUrl } from '../api';
 import { useAppData } from '../appData';
 import type { PushApprovedItem, ProjectSummary } from '../types';
-import { STAGE_LABELS, STATUS_LABELS, TRACK_LABELS, cx, etaText, fa, formatDate, percent, statsText, storageGet, storageSet } from '../util';
+import { STAGE_LABELS, STATUS_LABELS, TRACK_LABELS, cx, etaText, fa, formatDate, percent, aiUsageText, statsText, storageGet, storageSet } from '../util';
 import { navigate } from '../App';
 import Modal from './Modal';
 import { useToast } from './Toasts';
@@ -74,6 +74,7 @@ function ProjectRow({
           {p.year && <span>{fa(p.year)}</span>}
           <span>{formatDate(p.created_at)}</span>
           {p.status === 'ready' && p.stats && statsText(p.stats) && <span data-testid="project-stats">{statsText(p.stats)}</span>}
+          {p.status === 'ready' && aiUsageText(p.stats) && <span data-testid="project-ai">{aiUsageText(p.stats)}</span>}
         </div>
       </div>
       <div className="project-status">

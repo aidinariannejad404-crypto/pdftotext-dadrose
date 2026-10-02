@@ -15,6 +15,15 @@ export interface Word {
   alt: string | null;
 }
 
+export interface AiUsage {
+  calls: number;
+  cached: number; // answers served from the local AI cache (no cost)
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export type AiMode = 'none' | 'correct' | 'transcribe';
+
 export interface Line {
   page: number;
   words: Word[];
@@ -32,6 +41,9 @@ export interface PageResult {
   warnings: string[];
   edited_text?: string | null;
   approved?: boolean;
+  ai_mode?: AiMode;
+  quality?: number | null; // offline OCR quality 0..1
+  ai_usage?: AiUsage;
 }
 
 /** GET/PUT /pages/{doc}/{page}/text */
@@ -104,6 +116,8 @@ export interface ProjectStats {
   parse_seconds: number;
   engine: string;
   ai_pages: number;
+  ai_usage?: AiUsage;
+  ai_cost_usd?: number;
 }
 
 export interface Option {

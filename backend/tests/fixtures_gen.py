@@ -124,6 +124,24 @@ def hard_phone_scan(page_bgr: np.ndarray) -> np.ndarray:
     return phone_scan(page_bgr, angle=-6.0, seed=3, shadow=0.7, scale=0.6)
 
 
+def unreadable_scan(page_bgr: np.ndarray) -> np.ndarray:
+    """A badly out-of-focus, tiny photo: offline OCR produces mostly garbage."""
+    h, w = page_bgr.shape[:2]
+    small = cv2.resize(page_bgr, (w // 6, h // 6), interpolation=cv2.INTER_AREA)
+    small = cv2.GaussianBlur(small, (3, 3), 1.2)
+    out = cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
+    ok, enc = cv2.imencode(".jpg", out, [cv2.IMWRITE_JPEG_QUALITY, 40])
+    assert ok
+    return cv2.imdecode(enc, cv2.IMREAD_COLOR)
+
+
+def blank_scan(page_bgr: np.ndarray) -> np.ndarray:
+    """An empty sheet of paper with slight noise (e.g. the back of a booklet page)."""
+    rng = np.random.default_rng(5)
+    out = np.full_like(page_bgr, 238).astype(np.float32) + rng.normal(0, 3, page_bgr.shape)
+    return out.clip(0, 255).astype(np.uint8)
+
+
 def clean_scan(page_bgr: np.ndarray) -> np.ndarray:
     """A flatbed-like scan: no geometry change, mild noise + JPEG."""
     rng = np.random.default_rng(1)

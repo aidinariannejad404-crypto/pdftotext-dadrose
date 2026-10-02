@@ -291,6 +291,7 @@ for (const q of SEED) {
 }
 
 export type PageSet = 'exam' | 'notes';
+const AI_FIXED: Record<string, string> = { مرهونه: 'مرهوبه', مالک: 'مانک' };
 const setPages = (set: PageSet) => (set === 'notes' ? notesPages : pages);
 
 export function pageResult(doc: DocKind, index: number, set: PageSet = 'exam'): PageResult | null {
@@ -299,14 +300,23 @@ export function pageResult(doc: DocKind, index: number, set: PageSet = 'exam'): 
   const lines: Line[] = page.lines.map((l) => ({
     page: index,
     bbox: norm(unionPx(l.words)),
-    words: l.words.map((w) => ({ text: w.text, bbox: norm(w.px), conf: w.conf, flag: w.flag, alt: w.alt })),
+    words: l.words.map((w) => ({
+      text: w.text, bbox: norm(w.px), conf: w.conf, flag: w.flag,
+      // alt without flag = the AI corrected this word (Tesseract read the alt)
+      alt: w.alt ?? (set === 'exam' && !w.flag ? AI_FIXED[w.text] ?? null : null),
+    })),
   }));
+  const mode = set === 'notes' ? 'none' : doc === 'explanations' ? 'transcribe' : index === 0 ? 'correct' : 'none';
+  const quality = set === 'notes' ? 0.95 : doc === 'explanations' ? 0.38 : index === 0 ? 0.71 : 0.93;
   return {
     index, width: PAGE_W, height: PAGE_H, source: 'ocr', engine: 'claude+tesseract',
     preprocess: ['page_detect', 'perspective', 'deskew', 'shadow_removal', 'contrast'],
     lines,
     edited_text: null,
     approved: false,
+    ai_mode: mode,
+    quality,
+    ai_usage: mode === 'none' ? { calls: 0, cached: 0, input_tokens: 0, output_tokens: 0 } : { calls: 2, cached: 1, input_tokens: 4900, output_tokens: 1300 },
     warnings: set === 'exam' && doc === 'booklet' && index === 1 ? ['کیفیت اسکن پایین است؛ برخی کلمات با اطمینان کم خوانده شدند.'] : [],
   };
 }
@@ -509,7 +519,8 @@ export function makeReadyProject(id: string, title: string, createdAt: string): 
     stats: {
       pages: 3, started_at: new Date(Date.parse(createdAt || '2026-01-01') ).toISOString(),
       finished_at: new Date(Date.parse(createdAt || '2026-01-01') + 95_000).toISOString(),
-      ocr_seconds: 80, parse_seconds: 15, engine: 'claude+tesseract', ai_pages: 3,
+      ocr_seconds: 80, parse_seconds: 15, engine: 'claude+tesseract', ai_pages: 2,
+      ai_usage: { calls: 4, cached: 3, input_tokens: 9800, output_tokens: 2600 }, ai_cost_usd: 0.087,
     },
     documents: [
       { kind: 'booklet', filename: 'kanoon-1403-camscanner.pdf', page_count: pageCount('booklet') },

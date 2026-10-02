@@ -41,11 +41,26 @@ export const TRACK_LABELS: Record<string, string> = {
   other: 'سایر',
 };
 
+/** Short engine names (summary lines, chips). */
 export const ENGINE_LABELS: Record<string, string> = {
-  auto: 'خودکار',
+  auto: 'هوشمند',
   offline: 'فقط آفلاین',
-  claude: 'Claude',
-  gemini: 'Gemini',
+  claude: 'همیشه Claude',
+  gemini: 'همیشه Gemini',
+};
+
+/** Full option labels for engine selects. */
+export const ENGINE_OPTION_LABELS: Record<string, string> = {
+  auto: 'هوشمند (پیشنهادی): آفلاین، و هوش مصنوعی فقط برای بخش‌های مشکل‌دار',
+  offline: 'فقط آفلاین (رایگان)',
+  claude: 'همیشه با Claude (بیشترین دقت، بیشترین هزینه)',
+  gemini: 'همیشه با Gemini (بیشترین دقت، بیشترین هزینه)',
+};
+
+export const AI_MODE_LABELS: Record<string, string> = {
+  none: 'آفلاین',
+  correct: 'اصلاح‌شده با هوش مصنوعی',
+  transcribe: 'بازنویسی با هوش مصنوعی',
 };
 
 export const KEY_SOURCE_LABELS: Record<string, string> = {
@@ -381,4 +396,28 @@ export function parseKeys(raw: string): (string | null)[] {
     // other characters (commas, newlines…) are ignored
   }
   return out;
+}
+
+// ---------------------------------------------------------------- AI usage
+
+const faInt = new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 0 });
+const faMoney = new Intl.NumberFormat('fa-IR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+export function faNum(n: number): string {
+  return faInt.format(n);
+}
+
+/** «هوش مصنوعی: ۷ صفحه · ۱۲٬۴۰۰ توکن · ≈ ۰٫۰۹ دلار · ۳ پاسخ از حافظه» — '' when AI was not used. */
+export function aiUsageText(
+  s: { ai_pages?: number; ai_usage?: { calls: number; cached: number; input_tokens: number; output_tokens: number }; ai_cost_usd?: number } | null | undefined,
+): string {
+  const u = s?.ai_usage;
+  if (!u || (u.calls === 0 && u.cached === 0)) return '';
+  const parts: string[] = [];
+  if (s?.ai_pages) parts.push(`${faNum(s.ai_pages)} صفحه`);
+  const tokens = u.input_tokens + u.output_tokens;
+  if (tokens) parts.push(`${faNum(tokens)} توکن`);
+  if (s?.ai_cost_usd) parts.push(`≈ ${s.ai_cost_usd < 0.005 ? '<' + faMoney.format(0.01) : faMoney.format(s.ai_cost_usd)} دلار`);
+  if (u.cached) parts.push(`${faNum(u.cached)} پاسخ از حافظه`);
+  return `هوش مصنوعی: ${parts.join(' · ')}`;
 }

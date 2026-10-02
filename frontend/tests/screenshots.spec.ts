@@ -180,3 +180,18 @@ test('high-volume extras (desktop): bulk bar, keys dialog, duplicates', async ({
   await page.getByTestId('keys-input').fill('4123 2-42 1324 3');
   await page.screenshot({ path: `${OUT}/review-desktop-keys.png` });
 });
+
+test('AI usage (desktop): stats dialog and hover on an AI-corrected word', async ({ page }) => {
+  await reset(page);
+  await page.goto('/#/p/demo?q=1');
+  await page.locator('.ov-word-ai').first().waitFor();
+  await page.evaluate(() => document.fonts.ready);
+  await page.locator('.ov-word-ai').first().hover();
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${OUT}/review-desktop-ai.png` });
+  await page.getByTestId('more-menu').click();
+  await page.getByTestId('menu-stats').click();
+  await page.getByTestId('ai-stats').locator('table').waitFor();
+  await page.getByTestId('ai-stats').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${OUT}/review-desktop-ai-stats.png` });
+});

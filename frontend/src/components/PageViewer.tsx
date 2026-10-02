@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { pageImageUrl } from '../api';
 import { usePageResult } from '../pageCache';
 import type { BBox, DocInfo, DocKind, Flag, Line, Question, Word } from '../types';
-import { DOC_LABELS, cx, fa, sameBox } from '../util';
+import { AI_MODE_LABELS, DOC_LABELS, cx, fa, sameBox } from '../util';
 import { Icon } from './Icons';
 
 export interface FocusTarget {
@@ -211,6 +211,16 @@ export default function PageViewer({
             <Icon name="chev-left" />
           </button>
         </div>
+        {pr && (
+          <span
+            className={cx('read-badge', `read-${pr.ai_mode ?? 'none'}`)}
+            title={`این صفحه ${pr.ai_mode === 'transcribe' ? 'به‌طور کامل با هوش مصنوعی بازنویسی شد' : pr.ai_mode === 'correct' ? 'آفلاین خوانده شد و خطوط مشکوکش با هوش مصنوعی اصلاح شد' : 'فقط آفلاین خوانده شد (بدون هزینه)'}${pr.quality != null ? ` — کیفیت خواندن آفلاین: ${fa(Math.round(pr.quality * 100))}٪` : ''}`}
+            data-testid="read-badge"
+          >
+            {AI_MODE_LABELS[pr.ai_mode ?? 'none']}
+            {pr.quality != null && <span className="read-q">{fa(Math.round(pr.quality * 100))}٪</span>}
+          </span>
+        )}
         <div className="btn-group" role="group" aria-label="بزرگ‌نمایی">
           <button className="btn btn-sm btn-icon" onClick={() => zoomBy(1 / 1.25)} aria-label="کوچک‌نمایی" title="کوچک‌نمایی (Ctrl + چرخ ماوس)" disabled={zoom <= ZOOM_MIN}>
             <Icon name="zoom-out" />
@@ -259,7 +269,7 @@ export default function PageViewer({
                       w.bbox ? (
                         <div
                           key={`w${li}-${wi}`}
-                          className={cx('ov-word', w.flag && `ov-word-${w.flag}`)}
+                          className={cx('ov-word', w.flag && `ov-word-${w.flag}`, !w.flag && w.alt && 'ov-word-ai')}
                           style={boxStyle(w.bbox)}
                           onMouseEnter={() => setHover({ word: w, line, flagged: flagForWord(w) })}
                           onClick={() => onWordClick(w, line, doc, page)}
@@ -368,6 +378,7 @@ function WordTip({ hover }: { hover: Hover }) {
   const below = b[1] < 0.12;
   const reason = hover.word.flag ?? hover.flagged?.reason ?? null;
   const alt = hover.word.alt ?? hover.flagged?.alt ?? null;
+  const aiFixed = !reason && !!hover.word.alt; // alt without flag = corrected by AI
   const conf = hover.word.conf;
   return (
     <div
@@ -391,10 +402,16 @@ function WordTip({ hover }: { hover: Hover }) {
         {reason === 'disagree' && <span className="tag tag-warning">اختلاف موتورها</span>}
         {reason === 'low_conf' && <span className="tag tag-danger">اطمینان پایین</span>}
       </div>
-      {alt && (
-        <div className="word-tip-alt">
-          خوانش دیگر: <b dir="auto">{alt}</b>
+      {aiFixed ? (
+        <div className="word-tip-ai" data-testid="word-tip-ai">
+          اصلاح هوش مصنوعی: <b dir="auto">{alt}</b> ← <b dir="auto">{hover.word.text}</b>
         </div>
+      ) : (
+        alt && (
+          <div className="word-tip-alt">
+            خوانش دیگر: <b dir="auto">{alt}</b>
+          </div>
+        )
       )}
     </div>
   );

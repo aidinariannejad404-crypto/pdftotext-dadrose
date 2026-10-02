@@ -5,7 +5,7 @@ import { clearPageCache } from '../pageCache';
 import type { DocKind, EngineName, Flag, Line, Project, Question, Word } from '../types';
 import { useDraft, type Draft } from '../useDraft';
 import {
-  ENGINE_LABELS, STAGE_LABELS, computeMarks, statsText, cx, etaText, fa, getFieldText, isTypingTarget, percent,
+  ENGINE_LABELS, ENGINE_OPTION_LABELS, STAGE_LABELS, aiUsageText, computeMarks, statsText, cx, etaText, fa, getFieldText, isTypingTarget, percent,
   questionState, setFieldText, toAsciiDigits,
 } from '../util';
 import Editor, { NextProblemButton, type NextProblem } from './Editor';
@@ -615,6 +615,12 @@ export default function ReviewPage({ id }: { id: string }) {
               <b data-testid="count-approved">{fa(approvedCount)}</b> از <span data-testid="count-total">{fa(total)}</span> سؤال تأیید شد
               {counts.errors > 0 && <span className="text-danger"> · {fa(counts.errors)} خطا</span>}
               {project.stats && statsText(project.stats) && <span className="review-stats"> · {statsText(project.stats)}</span>}
+              {aiUsageText(project.stats) && (
+                <span className="review-stats" data-testid="ai-usage">
+                  {' '}
+                  · {aiUsageText(project.stats)}
+                </span>
+              )}
             </span>
           </div>
         </div>
@@ -901,7 +907,7 @@ export default function ReviewPage({ id }: { id: string }) {
           }}
         />
       )}
-      {dialog?.kind === 'stats' && <StatsDialog questions={questions} onClose={() => setDialog(null)} />}
+      {dialog?.kind === 'stats' && <StatsDialog questions={questions} project={project} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'keys' && (
         <KeysDialog
           project={project}
@@ -1053,7 +1059,7 @@ function ReocrDialog({
       }
     >
       <p>
-        وقتی متن این سؤال خیلی به‌هم ریخته است، می‌توانید آن را دوباره از روی تصویر بخوانید.{' '}
+        وقتی متن این سؤال خیلی به‌هم ریخته است، فقط ناحیه‌ی همین سؤال در تصویر دوباره خوانده می‌شود (هزینه‌ی کم).{' '}
         <b>متن فعلی و ویرایش‌های شما در این سؤال جایگزین می‌شود.</b>
       </p>
       <label className="field">
@@ -1061,7 +1067,7 @@ function ReocrDialog({
         <select className="input" value={engine} onChange={(e) => setEngine(e.target.value as EngineName)}>
           {engines.map((e) => (
             <option key={e} value={e} disabled={!engineAvailable(e)}>
-              {ENGINE_LABELS[e]} {engineAvailable(e) ? '' : '(پیکربندی نشده)'}
+              {ENGINE_OPTION_LABELS[e]} {engineAvailable(e) ? '' : '(پیکربندی نشده)'}
             </option>
           ))}
         </select>

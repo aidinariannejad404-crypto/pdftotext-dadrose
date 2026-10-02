@@ -3,7 +3,7 @@ import { createBatch, createProject } from '../api';
 import { useAppData } from '../appData';
 import type { Blueprint, DocType, EngineName, Track } from '../types';
 import { navigate } from '../App';
-import { ENGINE_LABELS, TRACK_LABELS, cx, fa, toAsciiDigits } from '../util';
+import { ENGINE_LABELS, ENGINE_OPTION_LABELS, TRACK_LABELS, cx, fa, toAsciiDigits } from '../util';
 import { Icon } from './Icons';
 import { useToast } from './Toasts';
 
@@ -332,12 +332,10 @@ export default function UploadCard({ onCreated }: { onCreated: (batchId?: string
     }
   };
 
-  const engineHint = (en: EngineName) => {
-    if (en === 'auto') {
-      const d = health?.default_engine;
-      return d ? `(پیش‌فرض: ${ENGINE_LABELS[d] ?? d})` : '';
-    }
-    return engineAvailable(en) ? '' : '(پیکربندی نشده)';
+  const aiConfigured = !!health && (health.engines.claude || health.engines.gemini);
+  const engineOption = (en: EngineName) => {
+    if (en === 'auto' && health && !aiConfigured) return 'هوشمند — هوش مصنوعی پیکربندی نشده؛ آفلاین اجرا می‌شود';
+    return `${ENGINE_OPTION_LABELS[en]}${en !== 'auto' && !engineAvailable(en) ? ' (پیکربندی نشده)' : ''}`;
   };
 
   return (
@@ -545,19 +543,23 @@ export default function UploadCard({ onCreated }: { onCreated: (batchId?: string
           </label>
           )}
           <label className="field">
-            <span className="field-label">موتور خواندن متن</span>
-            <select className="input" value={engine} onChange={(e) => setEngine(e.target.value as EngineName)}>
+            <span className="field-label">روش خواندن متن</span>
+            <select className="input" value={engine} onChange={(e) => setEngine(e.target.value as EngineName)} data-testid="engine-select">
               {(['auto', 'offline', 'claude', 'gemini'] as EngineName[]).map((en) => (
                 <option key={en} value={en} disabled={!engineAvailable(en)}>
-                  {ENGINE_LABELS[en]} {engineHint(en)}
+                  {engineOption(en)}
                 </option>
               ))}
             </select>
-            {health && !health.engines.claude && !health.engines.gemini ? (
-              <span className="field-hint">هیچ موتور هوش مصنوعی پیکربندی نشده؛ فقط خواندن آفلاین (دقت کمتر) در دسترس است.</span>
-            ) : (
-              <span className="field-hint">«خودکار» برای بیشتر فایل‌ها بهترین نتیجه را می‌دهد.</span>
-            )}
+            <span className="field-hint" data-testid="engine-hint">
+              {health && !aiConfigured
+                ? 'هیچ هوش مصنوعی پیکربندی نشده؛ همه‌ی صفحه‌ها رایگان و آفلاین خوانده می‌شوند.'
+                : engine === 'auto'
+                ? 'صفحه‌های تمیز رایگان و آفلاین خوانده می‌شوند و فقط خطوط مشکوک یا صفحه‌های ناخوانا به هوش مصنوعی فرستاده می‌شوند — معمولاً بخش کوچکی از هزینه‌ی «همیشه».'
+                : engine === 'offline'
+                ? 'بدون هزینه؛ برای اسکن‌های بی‌کیفیت دقت کمتری دارد.'
+                : 'همه‌ی صفحه‌ها به هوش مصنوعی فرستاده می‌شوند؛ دقیق‌ترین و پرهزینه‌ترین روش.'}
+            </span>
           </label>
         </div>
       </details>

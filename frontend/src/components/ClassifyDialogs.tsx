@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { loadPage } from '../pageCache';
 import { api } from '../api';
 import { useAppData } from '../appData';
-import type { ClassifyEngine, Project, Question } from '../types';
-import { articleLabel, cx, fa } from '../util';
+import type { AiMode, ClassifyEngine, Project, Question } from '../types';
+import { aiUsageText, articleLabel, cx, fa, faNum } from '../util';
 import Modal from './Modal';
 import { useToast } from './Toasts';
 
@@ -48,9 +49,8 @@ export function ClassifyDialog({
   };
 
   const engines: [ClassifyEngine, string, boolean, string][] = [
-    ['rules', 'قواعد آفلاین', true, 'سریع، بر اساس سرفصل‌ها، الگوی آزمون و کلیدواژه‌ها'],
-    ['claude', 'هوش مصنوعی Claude', engineAvailable('claude'), 'دقیق‌تر؛ کمی زمان می‌برد'],
-    ['gemini', 'هوش مصنوعی Gemini', engineAvailable('gemini'), 'دقیق‌تر؛ کمی زمان می‌برد'],
+    ['rules', 'فقط قواعد (رایگان)', true, 'سرفصل‌ها، الگوی آزمون و کلیدواژه‌ها؛ بدون هوش مصنوعی'],
+    ['auto', 'هوشمند: هوش مصنوعی فقط برای سؤال‌های نامطمئن', aiOk, 'اول قواعد؛ سؤال‌هایی که با اطمینان تشخیص داده نشدند به هوش مصنوعی فرستاده می‌شوند'],
   ];
 
   return (
@@ -103,7 +103,53 @@ function top<T>(entries: [T, number][], n: number) {
   return entries.sort((a, b) => b[1] - a[1]).slice(0, n);
 }
 
-export function StatsDialog({ questions, onClose }: { questions: Question[]; onClose: () => void }) {
+function AiUsageSection({ project }: { project: Project }) {
+  const [modes, setModes] = useState<Record<AiMode, number> | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const jobs = project.documents.flatMap((d) => Array.from({ length: d.page_count }, (_, i) => loadPage(project.id, d.kind, i).catch(() => null)));
+    void Promise.all(jobs).then((pages) => {
+      if (!alive) return;
+      const m: Record<AiMode, number> = { none: 0, correct: 0, transcribe: 0 };
+      for (const p of pages) if (p) m[p.ai_mode ?? 'none']++;
+      setModes(m);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [project]);
+  const u = project.stats?.ai_usage;
+  return (
+    <section data-testid="ai-stats">
+      <h3>مصرف هوش مصنوعی</h3>
+      <ul className="ai-modes">
+        {(['none', 'correct', 'transcribe'] as AiMode[]).map((m) => (
+          <li key={m}>
+            <span className={`mode-dot mode-${m}`} />
+            {m === 'none' ? 'بدون نیاز (آفلاین)' : m === 'correct' ? 'اصلاح خطوط مشکوک' : 'بازنویسی کامل'}:{' '}
+            <b>{modes ? fa(modes[m]) : '…'}</b> صفحه
+          </li>
+        ))}
+      </ul>
+      {u && (u.calls > 0 || u.cached > 0) ? (
+        <table className="ai-table">
+          <tbody>
+            <tr><td>درخواست‌ها</td><td>{faNum(u.calls)}</td></tr>
+            <tr><td>توکن ورودی</td><td>{faNum(u.input_tokens)}</td></tr>
+            <tr><td>توکن خروجی</td><td>{faNum(u.output_tokens)}</td></tr>
+            <tr><td>پاسخ از حافظه (رایگان)</td><td>{faNum(u.cached)}</td></tr>
+            <tr><td>هزینه‌ی تقریبی</td><td>{project.stats?.ai_cost_usd ? `≈ ${new Intl.NumberFormat('fa-IR', { minimumFractionDigits: 2, maximumFractionDigits: 3 }).format(project.stats.ai_cost_usd)} دلار` : '—'}</td></tr>
+          </tbody>
+        </table>
+      ) : (
+        <p className="muted small">در این پروژه از هوش مصنوعی استفاده نشد (کاملاً آفلاین و رایگان).</p>
+      )}
+      {aiUsageText(project.stats) && <p className="muted small">{aiUsageText(project.stats)}</p>}
+    </section>
+  );
+}
+
+export function StatsDialog({ questions, project, onClose }: { questions: Question[]; project?: Project; onClose: () => void }) {
   const { subjectName } = useAppData();
   const stats = useMemo(() => {
     const subj = new Map<string, number>();
@@ -153,7 +199,7 @@ export function StatsDialog({ questions, onClose }: { questions: Question[]; onC
     </ul>
   );
   return (
-    <Modal title="آمار طبقه‌بندی" onClose={onClose} wide footer={<button className="btn" onClick={onClose}>بستن</button>}>
+    <Modal title="آمار" onClose={onClose} wide footer={<button className="btn" onClick={onClose}>بستن</button>}>
       <div className="stats-grid" data-testid="stats">
         <section>
           <h3>سؤال‌ها به تفکیک درس</h3>
@@ -169,6 +215,7 @@ export function StatsDialog({ questions, onClose }: { questions: Question[]; onC
           <Bars rows={stats.articles} label={(k) => k} />
           {stats.noArticle > 0 && <p className="muted small">{fa(stats.noArticle)} سؤال بدون ماده</p>}
         </section>
+        {project && <AiUsageSection project={project} />}
       </div>
     </Modal>
   );

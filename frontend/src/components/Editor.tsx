@@ -481,7 +481,7 @@ export default function Editor(props: Props) {
           className="btn btn-sm btn-ghost"
           onClick={onReocr}
           disabled={reocrBusy || q.regions.length === 0}
-          title={q.regions.length === 0 ? 'این سؤال ناحیه‌ای روی تصویر ندارد' : 'متن این سؤال دوباره از روی تصویر خوانده می‌شود'}
+          title={q.regions.length === 0 ? 'این سؤال ناحیه‌ای روی تصویر ندارد' : 'فقط ناحیه‌ی همین سؤال در تصویر با هوش مصنوعی دوباره خوانده می‌شود (نه کل صفحه)'}
         >
           <Icon name="sparkle" size={16} /> {reocrBusy ? 'در حال بازخوانی…' : 'بازخوانی با هوش مصنوعی'}
         </button>
