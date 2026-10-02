@@ -521,7 +521,7 @@ test('review queue: cross-project stream, filter, open with from=queue and advan
 
 test('review: approve all clean questions, auto badge, stats line', async ({ page }) => {
   await page.goto('/#/p/b-1?q=2');
-  await expect(page.locator('.review-stats')).toContainText('۳ صفحه · ۲ دقیقه · Claude+Tesseract');
+  await expect(page.locator('.review-stats').first()).toContainText('۳ صفحه · ۲ دقیقه · Claude+Tesseract');
   await expect(page.getByTestId('approve-clean')).toContainText('۲ سؤال');
   await page.getByTestId('approve-clean').click();
   await page.getByTestId('confirm-auto-approve').click();
