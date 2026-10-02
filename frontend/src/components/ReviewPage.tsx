@@ -461,6 +461,22 @@ export default function ReviewPage({ id }: { id: string }) {
     }
   };
 
+  const dismissDuplicates = async (n: number) => {
+    setDismissedDups((d) => new Set(d).add(n)); // hide immediately
+    await flush();
+    try {
+      replaceQuestion(await api.updateQuestion(id, n, { duplicates: [] }));
+      toast.success('علامت تکراری برداشته شد.');
+    } catch (err) {
+      setDismissedDups((d) => {
+        const c = new Set(d);
+        c.delete(n);
+        return c;
+      });
+      toast.error(err);
+    }
+  };
+
   const doAutoApprove = async () => {
     setDialog(null);
     await flush();
@@ -770,7 +786,7 @@ export default function ReviewPage({ id }: { id: string }) {
               nextProblem={nextProblem}
               banner={completion}
               duplicates={(question.duplicates ?? []).length && !dismissedDups.has(question.number) ? question.duplicates : []}
-              onDismissDuplicates={() => setDismissedDups((d) => new Set(d).add(question.number))}
+              onDismissDuplicates={() => void dismissDuplicates(question.number)}
             />
           ) : (
             <div className="empty muted">

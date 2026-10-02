@@ -94,6 +94,11 @@ export function exportUrl(id: string, onlyApproved: boolean, format: 'json' | 'd
   return `/api/projects/${enc(id)}/export.${format}${onlyApproved ? '?only_approved=1' : ''}`;
 }
 
+/** One ZIP of Word files for several projects (text projects use the full-text docx). */
+export function exportZipUrl(projectIds: string[], onlyApproved: boolean): string {
+  return `/api/export.zip?project_ids=${projectIds.map(enc).join(',')}&only_approved=${onlyApproved ? 1 : 0}`;
+}
+
 /** Whole-document text export (text mode): Word or plain text. */
 export function exportTextUrl(id: string, onlyApproved: boolean, format: 'docx' | 'txt'): string {
   const path = format === 'docx' ? 'export-text.docx' : 'export.txt';

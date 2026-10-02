@@ -183,7 +183,7 @@ export interface ProjectSummary {
   queue_position?: number | null;
   auto_approved_count?: number;
   duplicate_count?: number;
-  stats?: ProjectStats; // not in the backend summary yet; shown when present
+  stats?: ProjectStats;
   question_count: number;
   approved_count: number;
   error_count: number;
@@ -198,6 +198,7 @@ export interface QuestionUpdate {
   source_ref?: string | null;
   topic?: string | null;
   articles?: ArticleRef[] | null;
+  duplicates?: DuplicateRef[] | null; // [] = «تکراری نیست»
   status?: 'pending' | 'approved' | null;
   flags?: Flag[] | null; // full remaining list after resolving suspicious words
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, exportTextUrl, exportUrl } from '../api';
+import { api, exportZipUrl } from '../api';
 import { useAppData } from '../appData';
 import type { PushApprovedItem, ProjectSummary } from '../types';
 import { STAGE_LABELS, STATUS_LABELS, TRACK_LABELS, cx, etaText, fa, formatDate, percent, statsText, storageGet, storageSet } from '../util';
@@ -258,18 +258,37 @@ export default function ProjectsPage() {
   };
 
   const bulkWord = async () => {
+    // One ZIP of Word files (approved questions; full text for text projects). Fetch first so a
+    // 400 «nothing to export» shows as a toast instead of a broken download.
     setBulkBusy('word');
-    for (const p of selectedReady) {
+    const url = exportZipUrl(selectedReady.map((p) => p.id), true);
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        let detail = `خطای سرور (${res.status})`;
+        try {
+          const j = (await res.json()) as { detail?: unknown };
+          if (typeof j.detail === 'string') detail = j.detail;
+        } catch {
+          /* not JSON */
+        }
+        throw new Error(detail);
+      }
+      const blob = await res.blob();
+      const href = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = p.mode === 'text' ? exportTextUrl(p.id, false, 'docx') : exportUrl(p.id, true, 'docx');
-      a.download = `dadrose-${p.id}.docx`;
+      a.href = href;
+      a.download = `dadrose-${selectedReady.length}-projects.zip`;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      await new Promise((r) => setTimeout(r, 700));
+      setTimeout(() => URL.revokeObjectURL(href), 10_000);
+      toast.success(`فایل ZIP شامل Word ${fa(selectedReady.length)} پروژه دانلود شد.`);
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setBulkBusy(null);
     }
-    setBulkBusy(null);
-    toast.info(`دانلود ${fa(selectedReady.length)} فایل Word شروع شد (سؤال‌های تأییدشده).`);
   };
 
   const running = (projects ?? []).filter((p) => p.status === 'processing').length;
@@ -340,7 +359,7 @@ export default function ProjectsPage() {
                 <Icon name="check" size={16} /> {bulkBusy === 'auto' ? 'در حال تأیید…' : 'تأیید خودکار سالم‌ها'}
               </button>
               <button className="btn btn-sm btn-word" onClick={bulkWord} disabled={!selectedReady.length || bulkBusy !== null} data-testid="bulk-word">
-                <Icon name="download" size={16} /> دانلود Word همه
+                <Icon name="download" size={16} /> {bulkBusy === 'word' ? 'در حال آماده‌سازی…' : 'دانلود Word همه (ZIP)'}
               </button>
               {health?.push_configured && (
                 <button className="btn btn-sm" onClick={bulkPush} disabled={!selectedQuestions.length || bulkBusy !== null} data-testid="bulk-push">
