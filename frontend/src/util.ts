@@ -66,6 +66,7 @@ export function fieldLabel(field: string | null | undefined): string {
   if (field === 'explanation') return 'پاسخ تشریحی';
   if (field === 'correct_key') return 'کلید';
   if (field === 'subject_key') return 'درس';
+  if (field === 'source_ref') return 'منبع سؤال';
   const m = /^option:(\d)$/.exec(field);
   if (m) return `گزینه‌ی ${fa(m[1])}`;
   return field;
@@ -92,8 +93,12 @@ export function questionState(q: Question): QState {
   return 'neutral';
 }
 
-export function getFieldText(q: Pick<Question, 'stem' | 'options' | 'explanation'>, field: string): string {
+export function getFieldText(
+  q: Pick<Question, 'stem' | 'options' | 'explanation'> & { source_ref?: string },
+  field: string,
+): string {
   if (field === 'stem') return q.stem;
+  if (field === 'source_ref') return q.source_ref ?? '';
   if (field === 'explanation') return q.explanation;
   const m = /^option:(\d)$/.exec(field);
   if (m) return q.options.find((o) => o.key === m[1])?.text ?? '';
@@ -236,6 +241,7 @@ export function setFieldText<T extends { stem: string; explanation: string; opti
   text: string,
 ): Partial<T> {
   if (field === 'stem') return { stem: text } as Partial<T>;
+  if (field === 'source_ref') return { source_ref: text } as unknown as Partial<T>;
   if (field === 'explanation') return { explanation: text } as Partial<T>;
   const m = /^option:(\d)$/.exec(field);
   if (m) return { options: d.options.map((o) => (o.key === m[1] ? { ...o, text } : o)) } as Partial<T>;

@@ -1,8 +1,8 @@
-import { useId, type ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { useAppData } from '../appData';
 import type { Flag, Issue, Question } from '../types';
 import type { Draft, SaveState } from '../useDraft';
-import { KEY_SOURCE_LABELS, cx, fa, fieldLabel, issueAction, issueTarget, type MarkRange } from '../util';
+import { KEY_SOURCE_LABELS, computeMarks, cx, fa, fieldLabel, getFieldText, issueAction, issueTarget, type MarkRange } from '../util';
 import HighlightField from './HighlightField';
 import { Icon } from './Icons';
 
@@ -34,7 +34,8 @@ interface Props {
   hasNext: boolean;
   onFlagClick: (flag: Flag, index: number) => void;
   onFlagHover: (index: number | null) => void;
-  onResolveFlag: (index: number, useAlt: boolean) => void;
+  onResolveFlag: (index: number, useAlt: boolean, field?: string) => void;
+  onDropFlags: (indices: number[]) => void;
   onIssueClick: (target: string | null) => void;
   register: (field: string, el: HTMLTextAreaElement | null) => void;
   index: number;
@@ -94,63 +95,144 @@ function FieldIssues({ issues }: { issues: Issue[] }) {
   );
 }
 
-function FlagCard({
-  flag, index, active, onLocate, onHover, onResolve,
-}: {
+const FIELD_ORDER = ['stem', 'option:1', 'option:2', 'option:3', 'option:4', 'source_ref', 'explanation'];
+const MAX_VISIBLE = 4;
+
+interface PlacedFlag {
   flag: Flag;
-  index: number;
+  index: number; // index in draft.flags
+  field: string; // where the word currently is ('source_ref' if it moved there)
+}
+
+/** Decide where each flag's word currently lives; flags whose word vanished are returned as `stale`. */
+export function placeFlags(draft: Draft): { placed: PlacedFlag[]; stale: number[] } {
+  const placed: PlacedFlag[] = [];
+  const stale: number[] = [];
+  draft.flags.forEach((flag, index) => {
+    const text = getFieldText(draft, flag.field);
+    const present = computeMarks(text, draft.flags, flag.field).some((m) => m.flagIndex === index);
+    if (present) placed.push({ flag, index, field: flag.field });
+    else if (draft.source_ref && draft.source_ref.includes(flag.word)) placed.push({ flag, index, field: 'source_ref' });
+    else stale.push(index);
+  });
+  placed.sort((x, y) => FIELD_ORDER.indexOf(x.field) - FIELD_ORDER.indexOf(y.field) || x.index - y.index);
+  return { placed, stale };
+}
+
+function FlagRow({
+  p, active, onLocate, onHover, onResolve,
+}: {
+  p: PlacedFlag;
   active: boolean;
   onLocate: () => void;
   onHover: (i: number | null) => void;
   onResolve: (useAlt: boolean) => void;
 }) {
-  const disagree = flag.reason === 'disagree' && !!flag.alt;
+  const { flag, index } = p;
+  const hasAlt = flag.reason === 'disagree' && !!flag.alt;
   return (
     <li
-      className={cx('flag-card', `flag-${flag.reason}`, active && 'is-active')}
+      className={cx('flag-row', `flag-${flag.reason}`, active && 'is-active')}
       onMouseEnter={() => onHover(index)}
       onMouseLeave={() => onHover(null)}
-      onFocus={() => onHover(index)}
-      onBlur={() => onHover(null)}
       data-testid="flag-chip"
     >
-      <button className="flag-word" onClick={onLocate} title="نمایش این کلمه در متن و روی تصویر">
-        {disagree ? (
-          <>
-            «<b>{flag.word}</b>» یا «<b>{flag.alt}</b>»؟
-          </>
-        ) : (
-          <>
-            «<b>{flag.word}</b>»
-            <span className="flag-why">{flag.reason === 'low_conf' ? 'خوانا نبود' : 'دو خوانش متفاوت'}</span>
-          </>
-        )}
-        <span className="flag-where">{fieldLabel(flag.field)}</span>
+      <button
+        className="flag-word"
+        onClick={onLocate}
+        onFocus={() => onHover(index)}
+        onBlur={() => onHover(null)}
+        title={hasAlt ? `دو خوانش: «${flag.word}» یا «${flag.alt}» — نمایش در متن و تصویر` : 'در تصویر خوانا نبود — نمایش در متن و تصویر'}
+      >
+        <b>{flag.word}</b>
+        {hasAlt ? <span className="flag-alt">یا {flag.alt}؟</span> : <span className="flag-why">خوانا نبود</span>}
+        <span className="flag-where">{fieldLabel(p.field === 'source_ref' ? 'source_ref' : flag.field)}</span>
       </button>
-      <div className="flag-actions">
-        {disagree ? (
-          <>
-            <button className="btn btn-xs" onClick={() => onResolve(false)} data-testid="flag-keep" title="متن فعلی درست است">
-              <Icon name="check" size={14} /> «{flag.word}» درست است
-            </button>
-            <button className="btn btn-xs btn-alt" onClick={() => onResolve(true)} data-testid="flag-use-alt" title="جایگزینی در متن">
-              «{flag.alt}» بگذار
-            </button>
-          </>
-        ) : (
-          <button className="btn btn-xs" onClick={() => onResolve(false)} data-testid="flag-keep">
-            <Icon name="check" size={14} /> درست است
-          </button>
-        )}
-      </div>
+      <button
+        className="btn btn-xs btn-icon flag-ok"
+        onClick={() => onResolve(false)}
+        title={`«${flag.word}» درست است`}
+        aria-label={`«${flag.word}» درست است`}
+        data-testid="flag-keep"
+      >
+        <Icon name="check" size={15} />
+      </button>
+      {hasAlt && (
+        <button
+          className="btn btn-xs btn-alt flag-swap"
+          onClick={() => onResolve(true)}
+          title={`جایگزینی با «${flag.alt}»`}
+          aria-label={`جایگزینی با «${flag.alt}»`}
+          data-testid="flag-use-alt"
+        >
+          ⇄ {flag.alt}
+        </button>
+      )}
     </li>
+  );
+}
+
+function FlagsPanel({
+  draft, activeFlagIndex, onFlagClick, onFlagHover, onResolveFlag, onDropFlags, labelId,
+}: {
+  draft: Draft;
+  activeFlagIndex: number | null;
+  onFlagClick: (flag: Flag, index: number) => void;
+  onFlagHover: (index: number | null) => void;
+  onResolveFlag: (index: number, useAlt: boolean, field?: string) => void;
+  onDropFlags: (indices: number[]) => void;
+  labelId: string;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const { placed, stale } = placeFlags(draft);
+  if (placed.length === 0 && stale.length === 0) return null;
+  const main = placed.filter((p) => p.field !== 'explanation');
+  const expl = placed.filter((p) => p.field === 'explanation');
+  const visible = showAll ? main : main.slice(0, MAX_VISIBLE);
+  const row = (p: PlacedFlag) => (
+    <FlagRow
+      key={`${p.index}-${p.flag.word}`}
+      p={p}
+      active={activeFlagIndex === p.index}
+      onLocate={() => onFlagClick(p.flag, p.index)}
+      onHover={onFlagHover}
+      onResolve={(alt) => onResolveFlag(p.index, alt, p.field)}
+    />
+  );
+  return (
+    <section className="flags-box" data-field="flags" tabIndex={-1} aria-labelledby={labelId}>
+      <h3 id={labelId} className="flags-title">
+        کلمات مشکوک ({fa(placed.length)})
+        <span className="muted small"> — با تصویر مقایسه کنید: ✓ درست است، ⇄ جایگزینی</span>
+      </h3>
+      {main.length > 0 && <ul className="flag-list">{visible.map(row)}</ul>}
+      {main.length > MAX_VISIBLE && (
+        <button className="link small flags-more" onClick={() => setShowAll((v) => !v)} data-testid="flags-more">
+          {showAll ? 'نمایش کمتر' : `نمایش همه (${fa(main.length)})`}
+        </button>
+      )}
+      {expl.length > 0 && (
+        <details className="flags-expl">
+          <summary className="small">در پاسخ تشریحی ({fa(expl.length)})</summary>
+          <ul className="flag-list">{expl.map(row)}</ul>
+        </details>
+      )}
+      {stale.length > 0 && (
+        <div className="small muted flags-stale">
+          {fa(stale.length)} کلمه‌ی مشکوک دیگر در متن فعلی نیست.{' '}
+          <button className="link" onClick={() => onDropFlags(stale)} data-testid="flags-drop-stale">
+            حذف از فهرست
+          </button>
+        </div>
+      )}
+    </section>
   );
 }
 
 export default function Editor(props: Props) {
   const {
     question: q, draft, saveState, activeFlagIndex, onChange, onOption, onBlurField, onSave, onApprove, onUnapprove,
-    onReocr, onDelete, onAdd, onPrev, onNext, hasPrev, hasNext, onFlagClick, onFlagHover, onResolveFlag, onIssueClick,
+    onReocr, onDelete, onAdd, onPrev, onNext, hasPrev, hasNext, onFlagClick, onFlagHover, onResolveFlag, onDropFlags, onIssueClick,
     register, index, total, reocrBusy, hasExplanations, nextProblem, banner,
   } = props;
   const { meta } = useAppData();
@@ -227,27 +309,15 @@ export default function Editor(props: Props) {
           </ul>
         )}
 
-        {flags.length > 0 && (
-          <section className="flags-box" data-field="flags" tabIndex={-1} aria-labelledby={`${uid}-flags`}>
-            <h3 id={`${uid}-flags`} className="flags-title">
-              کلمات مشکوک ({fa(flags.length)})
-              <span className="muted small"> — با تصویر مقایسه کنید و برای هر کدام یک گزینه را بزنید</span>
-            </h3>
-            <ul className="flag-list">
-              {flags.map((f, i) => (
-                <FlagCard
-                  key={`${f.field}-${f.word}-${i}`}
-                  flag={f}
-                  index={i}
-                  active={activeFlagIndex === i}
-                  onLocate={() => onFlagClick(f, i)}
-                  onHover={onFlagHover}
-                  onResolve={(alt) => onResolveFlag(i, alt)}
-                />
-              ))}
-            </ul>
-          </section>
-        )}
+        <FlagsPanel
+          draft={draft}
+          activeFlagIndex={activeFlagIndex}
+          onFlagClick={onFlagClick}
+          onFlagHover={onFlagHover}
+          onResolveFlag={onResolveFlag}
+          onDropFlags={onDropFlags}
+          labelId={`${uid}-flags`}
+        />
         <div className={cx('field-block', hasErrorAt('subject') && 'needs-attention-soft')}>
           <label className="field-label" htmlFor={`${uid}-subject`}>
             درس

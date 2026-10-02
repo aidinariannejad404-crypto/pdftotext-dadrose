@@ -272,16 +272,22 @@ export default function ReviewPage({ id }: { id: string }) {
   );
 
   const resolveFlag = useCallback(
-    (index: number, useAlt: boolean) => {
+    (index: number, useAlt: boolean, field?: string) => {
       if (!draft) return;
       const flag = draft.flags[index];
       if (!flag) return;
       const patch: Partial<Draft> = { flags: draft.flags.filter((_, i) => i !== index) };
       if (useAlt && flag.alt) {
-        const text = getFieldText(draft, flag.field);
-        const mark = computeMarks(text, draft.flags, flag.field).find((m) => m.flagIndex === index);
-        if (mark) {
-          Object.assign(patch, setFieldText(draft, flag.field, text.slice(0, mark.start) + flag.alt + text.slice(mark.end)));
+        const target = field ?? flag.field;
+        const text = getFieldText(draft, target);
+        let range: { start: number; end: number } | undefined;
+        if (target === flag.field) range = computeMarks(text, draft.flags, flag.field).find((m) => m.flagIndex === index);
+        else {
+          const at = text.indexOf(flag.word);
+          if (at >= 0) range = { start: at, end: at + flag.word.length };
+        }
+        if (range) {
+          Object.assign(patch, setFieldText(draft, target, text.slice(0, range.start) + flag.alt + text.slice(range.end)));
         } else {
           toast.info(`«${flag.word}» در متن پیدا نشد؛ فقط از فهرست حذف شد.`);
         }
@@ -291,6 +297,17 @@ export default function ReviewPage({ id }: { id: string }) {
       update(patch, true);
     },
     [draft, update, toast],
+  );
+
+  const dropFlags = useCallback(
+    (indices: number[]) => {
+      if (!draft) return;
+      const drop = new Set(indices);
+      setActiveFlag(null);
+      setHoverFlag(null);
+      update({ flags: draft.flags.filter((_, i) => !drop.has(i)) }, true);
+    },
+    [draft, update],
   );
 
   const onWordClick = useCallback(
@@ -663,6 +680,7 @@ export default function ReviewPage({ id }: { id: string }) {
               onFlagClick={onFlagClick}
               onFlagHover={setHoverFlag}
               onResolveFlag={resolveFlag}
+              onDropFlags={dropFlags}
               onIssueClick={onIssueClick}
               register={register}
               index={idx}

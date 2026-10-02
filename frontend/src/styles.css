@@ -2645,3 +2645,97 @@ kbd {
     padding: 10px 12px;
   }
 }
+
+/* ======================================== round 4: compact suspicious words */
+.flags-box {
+  padding: 8px 10px;
+}
+.flags-title {
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.flag-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 4px 8px;
+}
+.flag-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 34px;
+  padding: 0 4px 0 2px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-inline-start: 3px solid var(--mark-disagree-line);
+}
+.flag-row.flag-low_conf {
+  border-inline-start-color: var(--mark-low-line);
+}
+.flag-row:hover,
+.flag-row.is-active {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+.flag-row .flag-word {
+  flex: 1;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 13.5px;
+  padding: 2px 4px;
+  gap: 5px;
+}
+.flag-row .flag-word b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.flag-row .flag-alt,
+.flag-row .flag-why,
+.flag-row .flag-where {
+  font-size: 11.5px;
+  flex: none;
+}
+.flag-row .flag-where {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+}
+.flag-ok {
+  color: var(--success);
+  min-width: 30px;
+}
+.flag-swap {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.flags-more {
+  margin-top: 4px;
+}
+.flags-expl {
+  margin-top: 6px;
+}
+.flags-expl summary {
+  cursor: pointer;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.flags-stale {
+  margin-top: 6px;
+}
+.toasts {
+  bottom: 16px;
+}
+@media (max-width: 1023px) {
+  .toasts {
+    top: 10px;
+    bottom: auto;
+    left: 10px;
+    right: 10px;
+    max-width: none;
+  }
+}

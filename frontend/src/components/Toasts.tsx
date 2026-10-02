@@ -36,7 +36,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     (kind: Kind, text: string, action?: ToastAction) => {
       const id = ++seq.current;
       setToasts((t) => [...t.slice(-3), { id, kind, text, action }]);
-      setTimeout(() => remove(id), kind === 'error' ? (action ? 12000 : 7000) : 3500);
+      setTimeout(() => remove(id), kind === 'error' ? (action ? 10000 : 6000) : 4000);
     },
     [remove],
   );
