@@ -28,10 +28,7 @@ _KEY_WORDS = {
 _KEY_VALUE = r"[«\"'(\[]?\s*([1-4]|الف|چهارم|چهار|سوم|دوم|اول|یک|سه|دو|ب|ج|د)(?![\w])"
 _STATED_KEY = [
     re.compile(r"گزینه[‌\s]*(?:ی\s*)?(?:شماره\s*)?" + _KEY_VALUE),
-    re.compile(
-        r"(?:پاسخ|جواب)\s*(?:صحیح|درست)?\s*[:：]?\s*(?:گزینه\s*)?"
-        + _KEY_VALUE
-    ),
+    re.compile(r"(?:پاسخ|جواب)\s*(?:صحیح|درست)?\s*[:：]?\s*(?:گزینه\s*)?" + _KEY_VALUE),
 ]
 
 
@@ -74,9 +71,7 @@ def _inner_markers(text: str) -> list[str]:
 def _merged_suspects(q: Question) -> list[Issue]:
     issues: list[Issue] = []
     stem_markers = [m for m in _inner_markers(q.stem) if m.isdigit()]
-    next_number = re.search(
-        rf"(?:^|\s){q.number + 1}\s*[-.)]\s", to_ascii_digits(q.stem) + " "
-    )
+    next_number = re.search(rf"(?:^|\s){q.number + 1}\s*[-.)]\s", to_ascii_digits(q.stem) + " ")
     if ("1" in stem_markers and "2" in stem_markers) or next_number:
         issues.append(
             _issue(
@@ -179,9 +174,7 @@ def validate_project(
         upper = max(max(present), expected_count or 0)
         gaps = [n for n in range(1, upper + 1) if n not in present]
         if gaps:
-            issues.append(
-                _issue("error", "missing_numbers", f"سؤال‌های یافت‌نشده: {_compact(gaps)}")
-            )
+            issues.append(_issue("error", "missing_numbers", f"سؤال‌های یافت‌نشده: {_compact(gaps)}"))
     dups = sorted(n for n, c in Counter(numbers).items() if c > 1)
     if dups:
         issues.append(_issue("error", "duplicate_numbers", f"شماره‌های تکراری: {_fa_list(dups)}"))
@@ -218,7 +211,9 @@ def _compact(numbers: list[int]) -> str:
             prev = n
             continue
         parts.append(
-            to_persian_digits(start) if start == prev else f"{to_persian_digits(start)}–{to_persian_digits(prev)}"
+            to_persian_digits(start)
+            if start == prev
+            else f"{to_persian_digits(start)}–{to_persian_digits(prev)}"
         )
         if n is not None:
             start = prev = n

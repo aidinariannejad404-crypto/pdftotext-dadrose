@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from itertools import pairwise
 
 from .blueprints import detect_subject_heading, get_blueprint, subject_for
 from .models import (
@@ -166,8 +167,8 @@ def _guarded(toks: list[_Tok], i: int) -> bool:
 # ------------------------------------------------------------------------ noise
 
 _ALWAYS_NOISE = [
-    re.compile(r"^(صفحه|page|pg)\s*[:.]?\s*\d+(\s*(از|/|of)\s*\d+)?$", re.I),
-    re.compile(r"scanned\s+(with|by)|camscanner|https?://|www\.|t\.me/", re.I),
+    re.compile(r"^(صفحه|page|pg)\s*[:.]?\s*\d+(\s*(از|/|of)\s*\d+)?$", re.IGNORECASE),
+    re.compile(r"scanned\s+(with|by)|camscanner|https?://|www\.|t\.me/", re.IGNORECASE),
     re.compile(r"^(موفق|پیروز) باشید"),
     re.compile(r"^پایان( سؤالات| سوالات| آزمون)?[.!]?$"),
 ]
@@ -183,9 +184,7 @@ def _noise_lines(doc: DocumentResult) -> set[int]:
         for idx, line in enumerate(lines):
             text = to_ascii_digits(normalize_text(line.text))
             at_edge = idx < 2 or idx >= len(lines) - 2
-            if any(p.search(text) for p in _ALWAYS_NOISE):
-                noise.add(id(line))
-            elif at_edge and _PAGE_NUMBER.match(text):
+            if any(p.search(text) for p in _ALWAYS_NOISE) or at_edge and _PAGE_NUMBER.match(text):
                 noise.add(id(line))
             elif (idx < 3 or idx >= len(lines) - 3) and not detect_subject_heading(text):
                 toks = _line_tokens(line)
@@ -193,9 +192,7 @@ def _noise_lines(doc: DocumentResult) -> set[int]:
                     key = re.sub(r"\d+", "", comparable(text)).strip()
                     if key:
                         edge_texts.setdefault(key, set()).add(page.index)
-    repeated = {
-        k for k, pages in edge_texts.items() if len(pages) >= max(3, 0.3 * len(doc.pages))
-    }
+    repeated = {k for k, pages in edge_texts.items() if len(pages) >= max(3, 0.3 * len(doc.pages))}
     if repeated:
         for page in doc.pages:
             for line in page.lines:
@@ -298,7 +295,7 @@ def _parse_key(lines: list[Line]) -> tuple[dict[int, str], bool]:
             return False
         nums = [v for v, _ in vals]
         step = nums[1] - nums[0]
-        return step in (1, -1) and all(b - a == step for a, b in zip(nums, nums[1:], strict=False))
+        return step in (1, -1) and all(b - a == step for a, b in pairwise(nums))
 
     for line in lines:
         if _is_key_heading(line) and not _key_like(line):
@@ -345,7 +342,7 @@ def _parse_key(lines: list[Line]) -> tuple[dict[int, str], bool]:
             odd_letters = any(letter for _, letter in atoms[1::2])
 
             def increasing(seq: list[int]) -> bool:
-                return all(b > a for a, b in zip(seq, seq[1:], strict=False))
+                return all(b > a for a, b in pairwise(seq))
 
             if not even_letters and increasing(evens) and all(v <= 4 for v in odds):
                 for q, a in zip(evens, odds, strict=True):
@@ -600,7 +597,9 @@ def _section_marker(toks: list[_Tok], i: int) -> _SectionMarker | None:
         if toks[k].heading is not None or (toks[k].first and _marker_at(toks, k)):
             break
         head.append(toks[k].text)
-    return _SectionMarker(m.value, end - i, j > i, m.style, stated_key(" ".join(head), 60) is not None)
+    return _SectionMarker(
+        m.value, end - i, j > i, m.style, stated_key(" ".join(head), 60) is not None
+    )
 
 
 def _parse_explanations(toks: list[_Tok], known: set[int]) -> list[_Section]:
@@ -710,7 +709,8 @@ def _join(toks: list[_Tok], paragraphs: bool = False) -> str:
 
 def _to_question(b: _Build) -> Question:
     options = [
-        Option(key=str(k), text=_join(b.fields.get(f"option:{k}", []))) for k in range(1, b.nopts + 1)
+        Option(key=str(k), text=_join(b.fields.get(f"option:{k}", [])))
+        for k in range(1, b.nopts + 1)
     ]
     flags: list[Flag] = []
     all_toks: list[_Tok] = []

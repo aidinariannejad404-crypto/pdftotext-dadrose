@@ -19,7 +19,11 @@ SUBJECTS: list[dict] = [
         "aliases": ["متون فقه کانون", "متون فقه کانون وکلای دادگستری"],
     },
     {"key": "criminal", "name": "حقوق جزا", "aliases": ["جزا", "حقوق کیفری"]},
-    {"key": "criminal_procedure", "name": "آیین دادرسی کیفری", "aliases": ["آ.د.ک", "دادرسی کیفری"]},
+    {
+        "key": "criminal_procedure",
+        "name": "آیین دادرسی کیفری",
+        "aliases": ["آ.د.ک", "دادرسی کیفری"],
+    },
     {"key": "constitutional", "name": "حقوق اساسی", "aliases": ["اساسی"]},
     {
         "key": "fiqh_center",

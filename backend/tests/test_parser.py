@@ -197,7 +197,12 @@ def test_noisy_ocr_variants():
     qs = by_number(parse(text))
     assert sorted(qs) == [12, 13, 14]
     assert qs[12].stem == "کدام مورد صحیح است؟"
-    assert opts(qs[12]) == ["مالکیت مطلق است", "مالکیت نسبی است", "مالکیت زمانی باطل است", "هیچکدام"]
+    assert opts(qs[12]) == [
+        "مالکیت مطلق است",
+        "مالکیت نسبی است",
+        "مالکیت زمانی باطل است",
+        "هیچکدام",
+    ]
     assert qs[13].stem == "در قتل عمد مجازات چیست؟"
     assert opts(qs[13]) == ["قصاص", "دیه", "تعزیر", "حبس"]
     assert qs[14].stem == "سؤال تست با کشیده"
@@ -430,12 +435,15 @@ def test_flag_on_glued_marker_word_goes_to_option():
 
 
 def test_parse_single_question_booklet():
-    lines = make_lines("""
+    lines = make_lines(
+        """
 ۴۲- در دعوای{?} تصرف عدوانی
 کدام صحیح است؟
 ۱) مالکیت شرط است ۲) سبق تصرف کافی است
 ۳) فقط در اموال غیرمنقول ۴) گزینه ۲ و ۳
-""", page=5)
+""",
+        page=5,
+    )
     q = parse_single_question(lines, "booklet")
     assert q is not None
     assert q.number == 42

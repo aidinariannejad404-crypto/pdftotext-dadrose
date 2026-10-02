@@ -14,23 +14,25 @@ _ASCII_DIGITS = "0123456789"
 _LETTER_MAP = str.maketrans(
     {"ي": "ی", "ى": "ی", "ك": "ک", **dict(zip(_ARABIC_DIGITS, _PERSIAN_DIGITS, strict=True))}
 )
-_TO_ASCII = str.maketrans(dict(zip(_PERSIAN_DIGITS + _ARABIC_DIGITS, _ASCII_DIGITS * 2, strict=True)))
+_TO_ASCII = str.maketrans(
+    dict(zip(_PERSIAN_DIGITS + _ARABIC_DIGITS, _ASCII_DIGITS * 2, strict=True))
+)
 _TO_PERSIAN = str.maketrans(
     dict(zip(_ASCII_DIGITS + _ARABIC_DIGITS, _PERSIAN_DIGITS * 2, strict=True))
 )
 
-_AR_LETTER = "ء-غف-يٱ-ۓۺ-ۿ"
-_TATWEEL = re.compile(rf"(?<=[{_AR_LETTER}])ـ+(?=[{_AR_LETTER}])")
-_INVISIBLE = re.compile("[​﻿‎‏‪-‮⁦-⁩­]")
+_AR_LETTER = r"\u0621-\u063a\u0641-\u064a\u0671-\u06d3\u06fa-\u06ff"
+_TATWEEL = re.compile(rf"(?<=[{_AR_LETTER}])\u0640+(?=[{_AR_LETTER}])")
+_INVISIBLE = re.compile(r"[\u200b\ufeff\u200e\u200f\u202a-\u202e\u2066-\u2069\u00ad]")
 _MULTI_ZWNJ = re.compile(f"{ZWNJ}{{2,}}")
-_ZWNJ_SPACE = re.compile(rf"[ \t]*{ZWNJ}[ \t]+|[ \t]+{ZWNJ}[ \t]*|^{ZWNJ}+|{ZWNJ}+$", re.M)
+_ZWNJ_SPACE = re.compile(rf"[ \t]*{ZWNJ}[ \t]+|[ \t]+{ZWNJ}[ \t]*|^{ZWNJ}+|{ZWNJ}+$", re.MULTILINE)
 _MI_PREFIX = re.compile(rf"(?<![\w{ZWNJ}])(ن?می) +(?=[{_AR_LETTER}])")
-_QMARK = re.compile(r"(?<=[؀-ۿ‌])[ \t]*\?")
+_QMARK = re.compile(r"(?<=[\u0600-\u06ff\u200c])[ \t]*\?")
 _SPACE_BEFORE_PUNCT = re.compile(r"[ \t]+(?=[؟،؛!])")
 _HSPACE = re.compile(r"[^\S\n]+")
 _NEWLINES = re.compile(r" *\n[\s]*")
 
-_DIACRITICS = re.compile("[ً-ٰٟۖ-ۭ]")
+_DIACRITICS = re.compile(r"[\u064b-\u065f\u0670\u06d6-\u06ed]")
 _COMPARE_MAP = str.maketrans(
     {"أ": "ا", "إ": "ا", "آ": "ا", "ٱ": "ا", "ؤ": "و", "ئ": "ی", "ة": "ه", "ۀ": "ه", ZWNJ: ""}
 )
