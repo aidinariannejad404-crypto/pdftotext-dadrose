@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 
 import cv2
@@ -28,11 +29,25 @@ WATERMARK_RE = re.compile(
 )
 
 
+def tessdata_flag(tessdata_dir: str) -> str:
+    """`--tessdata-dir` option, or "" when the directory is passed via TESSDATA_PREFIX.
+
+    On Windows pytesseract splits the config non-POSIX style, so a quoted path
+    (``C:\\Program Files\\...``) reaches Tesseract with the quotes still on;
+    the environment variable avoids quoting entirely.
+    """
+    if not tessdata_dir:
+        return ""
+    if sys.platform == "win32":
+        os.environ["TESSDATA_PREFIX"] = tessdata_dir
+        return ""
+    return f' --tessdata-dir "{tessdata_dir}"'
+
+
 def tesseract_config(settings: Settings, psm: int) -> str:
-    cfg = f"--oem 1 --psm {psm} -c preserve_interword_spaces=1"
-    if settings.tessdata_dir:
-        cfg += f' --tessdata-dir "{settings.tessdata_dir}"'
-    return cfg
+    return f"--oem 1 --psm {psm} -c preserve_interword_spaces=1" + tessdata_flag(
+        settings.tessdata_dir
+    )
 
 
 def _configure(settings: Settings) -> None:

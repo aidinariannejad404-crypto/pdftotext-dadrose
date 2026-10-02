@@ -144,9 +144,9 @@ def detect_orientation(
 
         if tesseract_cmd:
             pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
-        cfg = "--psm 0"
-        if tessdata_dir:
-            cfg += f' --tessdata-dir "{tessdata_dir}"'
+        from app.ocr.tesseract import tessdata_flag
+
+        cfg = "--psm 0" + tessdata_flag(tessdata_dir)
         osd = pytesseract.image_to_osd(small, config=cfg, output_type=pytesseract.Output.DICT)
         if float(osd.get("orientation_conf", 0)) >= OSD_MIN_CONF:
             return int(osd.get("rotate", 0)) % 360

@@ -32,6 +32,30 @@
 ۲. سؤال‌ها/صفحه‌ها را با تصویر مقایسه، اصلاح و تأیید کنید.
 ۳. «دانلود فایل Word» ← در پنل سایت: «ورود هوشمند از ورد» ← بازبینی تکراری‌ها و ثبت.
 
+## اجرا روی سیستم خودتان (برای تست)
+
+**ویندوز:**
+
+۱. این‌ها را نصب کنید (یک بار):
+   - [Git](https://git-scm.com/download/win) و [Node.js LTS](https://nodejs.org)
+   - uv: در PowerShell ‏`powershell -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+   - Tesseract: نصب‌کننده‌ی [UB Mannheim](https://github.com/UB-Mannheim/tesseract/wiki)؛ هنگام نصب
+     در «Additional language data» گزینه‌ی **Persian** را تیک بزنید.
+۲. یک ترمینال PowerShell جدید باز کنید:
+
+```powershell
+git clone -b claude/pdf-to-text-api-4r916f https://github.com/aidinariannejad404-crypto/pdftotext-dadrose.git
+cd pdftotext-dadrose
+powershell -ExecutionPolicy Bypass -File scripts\start-windows.ps1
+```
+
+مرورگر خودکار روی `http://127.0.0.1:8000` باز می‌شود. بعد از دریافت کد جدید (`git pull`) با
+`-Rebuild` اجرا کنید. برای فعال کردن Claude، کلید را در `backend\.env` بگذارید
+(`ANTHROPIC_API_KEY=...`) و دوباره اجرا کنید.
+
+**مک / لینوکس:** `brew install uv node tesseract tesseract-lang` (یا معادل apt) و سپس
+`./scripts/start.sh`.
+
 ## نصب روی سرور (Docker)
 
 ```bash
