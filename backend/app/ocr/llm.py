@@ -33,7 +33,7 @@ Mode = Literal["page", "region"]
 CallMode = Literal["page", "region", "correct"]
 
 # Bump when prompts change so cached answers from older prompts are not reused.
-PROMPT_VERSION = "2"
+PROMPT_VERSION = "3"
 MAX_TOKENS: dict[str, int] = {"page": 8000, "region": 3000, "correct": 1500}
 
 # English instructions: Persian text costs ~2–3× more tokens for the same content.
@@ -82,11 +82,13 @@ _FENCE_RE = re.compile(r"^\s*```[a-zA-Z]*\s*\n?|\n?\s*```\s*$")
 
 
 def correction_prompt(lines: list[str]) -> str:
-    """User text of a correction call. `lines` are already "index: text" with ⟦suspicious⟧
-    words marked."""
+    """User text of a correction call. `lines` are "index: text" (shown in the image, with
+    ⟦suspicious⟧ words marked) or "index~ text" (context only, not in the image)."""
     return (
-        "The image shows these OCR lines (crops stacked top to bottom, separated by gray "
-        "bars). Words in ⟦ ⟧ are suspicious; check them first, but report any misread word.\n"
+        "The image shows the OCR lines written as `index: text` (crops stacked top to "
+        "bottom, separated by gray bars). Lines written `index~ text` are context only and "
+        "not in the image: never correct them. Words in ⟦ ⟧ are suspicious; check them "
+        "first, but report any misread word.\n"
         + "\n".join(lines)
         + '\n\nReturn {"checked": [indices of the lines you could verify in the image], '
         '"corrections": [{"line": index, "from": "OCR word copied exactly from that line '

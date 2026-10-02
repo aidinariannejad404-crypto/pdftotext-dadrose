@@ -89,7 +89,7 @@ class FakeEngine:
         self._record("correct", jpeg)
         with self.lock:
             self.prompts.append(lines)
-        indices = [int(t.split(":", 1)[0]) for t in lines]
+        indices = [int(t.split(":", 1)[0]) for t in lines if ":" in t.split(" ", 1)[0]]
         return llm.AiResult(
             corrections=list(self.corrections or []),
             checked=indices,
@@ -208,7 +208,7 @@ def test_smart_mode_uses_ai_only_where_needed(
     assert lines_text(p1) == fg.GROUND_TRUTH
     # Only flagged lines (+ neighbours) were sent, with ⟦⟧ marks.
     (sent,) = ai.prompts
-    assert [int(t.split(":")[0]) for t in sent] == [0, 1, 6, 7, 8]
+    assert [t.split(" ", 1)[0] for t in sent] == ["0:", "1~", "6~", "7:", "8~"]
     assert "⟦مستاحر⟧" in sent[0] and "⟦" not in sent[1]
     # The correction image is a crop, much smaller than the page.
     _, cw, ch = next(c for c in ai.calls if c[0] == "correct")
@@ -371,7 +371,8 @@ def test_correction_request_stacks_few_crops() -> None:
     img = np.full((2000, 1414), 255, np.uint8)
     req = pipeline.build_correction_request(page, img)
     assert req is not None
-    assert req.sent == {0, 1, 2, 8, 9, 10, 11, 17, 18, 19}
+    assert req.sent == {0, 1, 9, 10, 18}  # only lines visible in the image
+    assert [t.split(" ", 1)[0] for t in req.lines][:4] == ["0:", "1:", "2~", "8~"]
     out = cv2.imdecode(np.frombuffer(req.jpeg, np.uint8), cv2.IMREAD_UNCHANGED)
     assert out.ndim == 2 and out.shape[0] < 0.5 * 2000 * (out.shape[1] / 1414)
     assert pipeline.build_correction_request(_page(_gt_page_lines(0)), img) is None

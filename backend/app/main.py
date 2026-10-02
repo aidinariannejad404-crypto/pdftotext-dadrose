@@ -19,6 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from .config import get_settings
 from .jobs import JobRunner
 from .models import (
+    AiUsage,
     DocInfo,
     DocKind,
     DocType,
@@ -482,7 +483,7 @@ class ReocrBody(BaseModel):
 @app.post("/api/projects/{project_id}/questions/{number}/reocr", response_model=Question)
 def reocr_question(project_id: str, number: int, body: ReocrBody | None = None):
     from .parser import parse_single_question
-    from .pipeline import reocr_region
+    from .pipeline import reocr_region_ex
 
     body = body or ReocrBody()
     project = _load(project_id)
@@ -491,10 +492,15 @@ def reocr_question(project_id: str, number: int, body: ReocrBody | None = None):
     if not regions:
         raise HTTPException(400, "محدوده‌ی این سؤال روی صفحه مشخص نیست.")
     lines = []
+    total = AiUsage()
     try:
         for region in regions:
             image = store.page_image(project_id, "booklet", region.page)
-            for line in reocr_region(image, region.bbox, body.engine, settings):
+            region_lines, usage = reocr_region_ex(
+                image, region.bbox, body.engine, settings, region.page
+            )
+            total.add(usage)
+            for line in region_lines:
                 line.page = region.page
                 lines.append(line)
     except Exception as exc:
@@ -506,6 +512,11 @@ def reocr_question(project_id: str, number: int, body: ReocrBody | None = None):
     with store.lock(project_id):
         project = _load(project_id)
         question = _find(project, number)
+        if total.calls or total.cached:
+            from .jobs import ai_cost
+
+            project.stats.ai_usage.add(total)
+            project.stats.ai_cost_usd = ai_cost(project.stats.ai_usage, project.engine, settings)
         question.stem = parsed.stem
         if parsed.options:
             question.options = parsed.options

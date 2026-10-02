@@ -56,7 +56,7 @@ AI_MAX_SIDE = 1568  # Claude downsizes anything larger anyway; fewer pixels = fe
 AI_JPEG_QUALITY = 80
 AI_WORKERS = 4
 REGION_MARGIN = 0.01  # normalized margin added around a re-OCR region
-MAX_CROPS = 3  # correction crops per page (stacked into one image → one call)
+MAX_CROPS = 6  # correction bands per page (stacked into one image → still one call)
 BUDGET_WARNING = "سقف استفاده از هوش مصنوعی برای این پروژه پر شد"
 
 
@@ -257,17 +257,23 @@ def _band_groups(boxes: dict[int, BBox], max_groups: int) -> list[tuple[float, f
 
 
 def build_correction_request(page: PageResult, img: np.ndarray) -> CorrectionRequest | None:
-    """Crop the lines with flagged words (+1 neighbour each side) and stack the crops into
-    one image. One call per page is cheaper than one per crop: the system prompt and
-    instructions are paid once, and image tokens scale with area either way."""
-    flagged = [i for i, ln in enumerate(page.lines) if any(w.flag for w in ln.words)]
+    """Crop the lines that contain flagged words and stack the crops into one image.
+
+    Token choices: one stacked image per page instead of one call per crop (system prompt
+    and instructions are paid once; image tokens scale with area either way), so up to
+    MAX_CROPS bands are allowed — more, tighter bands mean less image area. Neighbour lines
+    (±1) are sent as *text only* context (`i~ text`): ~30 text tokens instead of ~85 image
+    tokens per line, and they cannot be corrected."""
+    flagged = [
+        i
+        for i, ln in enumerate(page.lines)
+        if ln.bbox is not None and any(w.flag for w in ln.words)
+    ]
     if not flagged:
         return None
     n = len(page.lines)
-    selected = sorted({j for i in flagged for j in (i - 1, i, i + 1) if 0 <= j < n})
-    boxes = {i: page.lines[i].bbox for i in selected if page.lines[i].bbox is not None}
-    if not boxes:
-        return None
+    context = sorted({j for i in flagged for j in (i - 1, i + 1) if 0 <= j < n} - set(flagged))
+    boxes = {i: page.lines[i].bbox for i in flagged}
     h, w = img.shape[:2]
     x0 = max(0.0, min(b[0] for b in boxes.values()) - 0.01)
     x1 = min(1.0, max(b[2] for b in boxes.values()) + 0.01)
@@ -275,8 +281,7 @@ def build_correction_request(page: PageResult, img: np.ndarray) -> CorrectionReq
     for y0, y1 in _band_groups(boxes, MAX_CROPS):  # type: ignore[arg-type]
         py0, py1 = int(max(0.0, y0 - 0.005) * h), int(np.ceil(min(1.0, y1 + 0.005) * h))
         crops.append(img[py0:py1, int(x0 * w) : int(np.ceil(x1 * w))])
-    total_h = sum(c.shape[0] for c in crops)
-    if total_h > 0.8 * h:
+    if sum(c.shape[0] for c in crops) > 0.8 * h:
         stacked = img  # almost the whole page anyway
     else:
         bar = np.full((8, crops[0].shape[1]), 150, np.uint8)
@@ -286,11 +291,14 @@ def build_correction_request(page: PageResult, img: np.ndarray) -> CorrectionReq
                 parts.append(bar)
             parts.append(c)
         stacked = np.vstack(parts)
-    texts = [
-        f"{i}: " + " ".join(f"⟦{w.text}⟧" if w.flag else w.text for w in page.lines[i].words)
-        for i in selected
-    ]
-    return CorrectionRequest(ai_jpeg(stacked), texts, set(selected))
+    texts = []
+    for i in sorted(set(flagged) | set(context)):
+        words = page.lines[i].words
+        if i in boxes:
+            texts.append(f"{i}: " + " ".join(f"⟦{w.text}⟧" if w.flag else w.text for w in words))
+        else:
+            texts.append(f"{i}~ " + " ".join(w.text for w in words))
+    return CorrectionRequest(ai_jpeg(stacked), texts, set(flagged))
 
 
 def _split_box(box: BBox | None, n: int) -> list[BBox | None]:

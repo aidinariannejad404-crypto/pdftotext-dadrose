@@ -15,6 +15,10 @@ from .store import Store
 
 log = logging.getLogger(__name__)
 
+# Issues meaning the offline pass broke a question's structure (worth an AI re-read).
+STRUCTURAL_CODES = {"option_count", "empty_option", "empty_stem", "merged_suspect"}
+MAX_REPAIRS = 30
+
 
 class JobRunner:
     def __init__(self, store: Store, settings: Settings) -> None:
@@ -73,7 +77,8 @@ class JobRunner:
             return project
 
     def _run(self, project_id: str) -> None:
-        from .pipeline import process_document  # heavy imports (cv2, pymupdf) stay lazy
+        # heavy imports (cv2, pymupdf) stay lazy
+        from .pipeline import AiBudget, process_document
 
         try:
             project = self.store.load(project_id)
@@ -83,6 +88,8 @@ class JobRunner:
             stats = ProjectStats(pages=total, started_at=datetime.now(UTC))
             self._set_progress(project_id, "ocr", 0, total, status="processing", stats=stats)
             engines: set[str] = set()
+            # one AI budget per project, shared by its documents and the repair pass
+            budget = AiBudget(self.settings.ai_max_calls_per_project)
             out_dir = self.store.pages_dir(project_id)
             out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -100,6 +107,7 @@ class JobRunner:
                     self._settings_for_run(),
                     out_dir,
                     on_progress,
+                    budget=budget,
                 )
                 self.store.save_document(project_id, doc)
                 done_before += info.page_count
@@ -113,7 +121,7 @@ class JobRunner:
             stats.engine = " / ".join(sorted(engines))
             self._set_progress(project_id, "parsing", total, total, stats=stats)
             parse_started = time.monotonic()
-            self.parse(project_id, after_ocr=True)
+            self.parse(project_id, after_ocr=True, budget=budget)
             with self.store.lock(project_id):
                 project = self.store.load(project_id)
                 project.stats.parse_seconds = round(time.monotonic() - parse_started, 1)
@@ -148,7 +156,12 @@ class JobRunner:
             self.store.save(project)
 
     def parse(
-        self, project_id: str, blueprint: str | None = None, *, after_ocr: bool = False
+        self,
+        project_id: str,
+        blueprint: str | None = None,
+        *,
+        after_ocr: bool = False,
+        budget=None,
     ) -> Project:
         """(Re)build questions from the stored OCR results.
 
@@ -175,6 +188,8 @@ class JobRunner:
                 project.mode = _detect_mode(result)
             else:
                 project.mode = project.doc_type
+            if after_ocr and project.engine == "auto" and project.mode == "questions":
+                self._repair_broken_questions(project, budget)
             detect_duplicates(project, self.store)
             revalidate(project)
             if after_ocr and project.auto_approve:
@@ -184,6 +199,59 @@ class JobRunner:
             project.progress.stage = "done"
             self.store.save(project)
             return project
+
+    def _repair_broken_questions(self, project: Project, budget) -> None:
+        """Smart mode, last resort: re-read with the AI only the questions whose structure
+        the offline pass broke (missing options / stem), and only their region."""
+        from .ocr.llm import AiEngineError
+        from .parser import parse_single_question
+        from .pipeline import reocr_region_ex, resolve_engine
+        from .validate import validate_question
+
+        if resolve_engine("auto", self.settings) is None:
+            return
+        booklet = self.store.load_document(project.id, "booklet")
+        transcribed = {
+            p.index for p in (booklet.pages if booklet else []) if p.ai_mode == "transcribe"
+        }
+        has_expl = any(d.kind == "explanations" for d in project.documents)
+        repaired = 0
+        for question in project.questions:
+            if repaired >= MAX_REPAIRS:
+                break
+            codes = {i.code for i in validate_question(question, has_expl)}
+            regions = [r for r in question.regions if r.doc == "booklet"]
+            if not (codes & STRUCTURAL_CODES) or not regions:
+                continue
+            if all(r.page in transcribed for r in regions):
+                continue  # the AI already read these pages in full
+            lines = []
+            try:
+                for region in regions:
+                    image = self.store.page_image(project.id, "booklet", region.page)
+                    region_lines, usage = reocr_region_ex(
+                        image, region.bbox, "auto", self.settings, region.page, budget
+                    )
+                    project.stats.ai_usage.add(usage)
+                    lines.extend(region_lines)
+            except AiEngineError as exc:
+                log.warning("AI repair of question %s failed: %s", question.number, exc)
+                continue
+            parsed = parse_single_question(lines, "booklet") if lines else None
+            if parsed is None:
+                continue
+            filled = [o for o in parsed.options if o.text.strip()]
+            if parsed.stem.strip() and len(filled) == 4:
+                question.stem = parsed.stem
+                question.options = parsed.options
+                question.flags = [f for f in question.flags if f.doc != "booklet"] + parsed.flags
+                if parsed.correct_key and not question.correct_key:
+                    question.correct_key = parsed.correct_key
+                    question.key_source = parsed.key_source
+                repaired += 1
+        if repaired:
+            log.info("AI repaired %d questions in %s", repaired, project.id)
+        project.stats.ai_cost_usd = ai_cost(project.stats.ai_usage, project.engine, self.settings)
 
     def load_doc(self, project_id: str, kind: DocKind) -> DocumentResult | None:
         return self.store.load_document(project_id, kind)
