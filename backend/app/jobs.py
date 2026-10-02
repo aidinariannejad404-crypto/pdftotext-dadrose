@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 
 from .config import Settings
 from .models import DocKind, DocumentResult, Project
@@ -19,9 +22,35 @@ class JobRunner:
         self.pool = ThreadPoolExecutor(
             max_workers=max(1, settings.workers), thread_name_prefix="job"
         )
+        self._queue_lock = threading.Lock()
+        self._queued: list[str] = []  # FIFO of submitted, not yet started projects
+        self._running: set[str] = set()
 
     def submit(self, project_id: str) -> None:
-        self.pool.submit(self._run, project_id)
+        with self._queue_lock:
+            if project_id in self._queued or project_id in self._running:
+                return
+            self._queued.append(project_id)
+        self.pool.submit(self._run_tracked, project_id)
+
+    def queue_state(self) -> dict:
+        with self._queue_lock:
+            return {"running": sorted(self._running), "queued": list(self._queued)}
+
+    def queue_position(self, project_id: str) -> int | None:
+        with self._queue_lock:
+            return self._queued.index(project_id) + 1 if project_id in self._queued else None
+
+    def _run_tracked(self, project_id: str) -> None:
+        with self._queue_lock:
+            if project_id in self._queued:
+                self._queued.remove(project_id)
+            self._running.add(project_id)
+        try:
+            self._run(project_id)
+        finally:
+            with self._queue_lock:
+                self._running.discard(project_id)
 
     def resume_pending(self) -> None:
         """Re-queue projects interrupted by a restart."""
@@ -49,7 +78,12 @@ class JobRunner:
             project = self.store.load(project_id)
             total = sum(d.page_count for d in project.documents)
             done_before = 0
-            self._set_progress(project_id, "ocr", 0, total, status="processing")
+            started = time.monotonic()
+            stats = project.stats.model_copy(
+                update={"pages": total, "started_at": datetime.now(UTC), "ai_pages": 0}
+            )
+            self._set_progress(project_id, "ocr", 0, total, status="processing", stats=stats)
+            engines: set[str] = set()
             out_dir = self.store.pages_dir(project_id)
             out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -70,9 +104,20 @@ class JobRunner:
                 )
                 self.store.save_document(project_id, doc)
                 done_before += info.page_count
+                for page in doc.pages:
+                    engines.add(page.engine)
+                    stats.ai_pages += "+" in page.engine  # e.g. "claude+tesseract"
 
-            self._set_progress(project_id, "parsing", total, total)
-            self.parse(project_id)
+            stats.ocr_seconds = round(time.monotonic() - started, 1)
+            stats.engine = " / ".join(sorted(engines))
+            self._set_progress(project_id, "parsing", total, total, stats=stats)
+            parse_started = time.monotonic()
+            self.parse(project_id, after_ocr=True)
+            with self.store.lock(project_id):
+                project = self.store.load(project_id)
+                project.stats.parse_seconds = round(time.monotonic() - parse_started, 1)
+                project.stats.finished_at = datetime.now(UTC)
+                self.store.save(project)
         except Exception as exc:  # report any failure on the project instead of losing it
             log.exception("processing failed for %s", project_id)
             with self.store.lock(project_id):
@@ -92,9 +137,16 @@ class JobRunner:
                 setattr(project, key, value)
             self.store.save(project)
 
-    def parse(self, project_id: str, blueprint: str | None = None) -> Project:
-        """(Re)build questions from the stored OCR results."""
+    def parse(
+        self, project_id: str, blueprint: str | None = None, *, after_ocr: bool = False
+    ) -> Project:
+        """(Re)build questions from the stored OCR results.
+
+        After OCR, duplicates are detected and — when the project asks for it —
+        clean questions are approved automatically.
+        """
         from .parser import build_questions
+        from .review import auto_approve, detect_duplicates, revalidate
 
         booklet = self.store.load_document(project_id, "booklet")
         if booklet is None:
@@ -113,6 +165,10 @@ class JobRunner:
                 project.mode = _detect_mode(result)
             else:
                 project.mode = project.doc_type
+            detect_duplicates(project, self.store)
+            revalidate(project)
+            if after_ocr and project.auto_approve:
+                auto_approve(project)
             project.status = "ready"
             project.error = None
             project.progress.stage = "done"

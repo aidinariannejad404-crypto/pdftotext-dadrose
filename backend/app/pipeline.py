@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -124,6 +125,18 @@ def _process_page(
     )
 
 
+def page_workers(settings: Settings, uses_ai: bool) -> int:
+    """Pages processed in parallel inside one document.
+
+    Tesseract runs single-threaded (OMP_THREAD_LIMIT=1), so CPU-bound pages scale with the
+    cores left after the parallel documents (`workers`); AI calls are network-bound.
+    """
+    if settings.page_workers > 0:
+        return settings.page_workers
+    cpu_share = max(1, (os.cpu_count() or 2) // max(1, settings.workers))
+    return max(AI_WORKERS, cpu_share) if uses_ai else cpu_share
+
+
 def process_document(
     pdf_bytes: bytes,
     kind: str,
@@ -168,7 +181,7 @@ def process_document(
     # Rendering is sequential (bounded memory: at most AI_WORKERS pages in flight); OCR and
     # network-bound AI calls run in a small pool. Tesseract itself is CPU-bound, so with no
     # AI engine the pool is small too.
-    workers = AI_WORKERS if ai is not None else 2
+    workers = page_workers(settings, ai is not None)
     results: list[PageResult] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         pending = []

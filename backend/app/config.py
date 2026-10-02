@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     admin_password: str = ""
     # Number of documents processed in parallel.
     workers: int = 2
+    # Pages processed in parallel inside a document; 0 = automatic (CPU cores / workers).
+    page_workers: int = 0
 
     # ---- rendering / offline OCR
     render_dpi: int = 300

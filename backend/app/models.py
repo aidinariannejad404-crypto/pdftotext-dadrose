@@ -111,6 +111,15 @@ class Classification(BaseModel):
     section_path: list[str] = Field(default_factory=list)  # book headings above the question
 
 
+class DuplicateRef(BaseModel):
+    """Another question (in this or an earlier project) with the same or very similar text."""
+
+    project_id: str
+    project_title: str = ""
+    number: int
+    similarity: float  # 0..1 (1 = identical after normalization)
+
+
 class Option(BaseModel):
     key: str  # "1".."4"
     text: str = ""
@@ -132,6 +141,8 @@ class Question(BaseModel):
     flags: list[Flag] = Field(default_factory=list)
     issues: list[Issue] = Field(default_factory=list)
     status: Literal["pending", "approved"] = "pending"
+    approved_by: Literal["admin", "auto"] | None = None
+    duplicates: list[DuplicateRef] = Field(default_factory=list)
     edited: bool = False
 
 
@@ -147,6 +158,16 @@ class Progress(BaseModel):
     stage: str = "queued"  # queued|rendering|ocr|parsing|done|failed (+ Persian label in UI)
     done: int = 0
     total: int = 0
+
+
+class ProjectStats(BaseModel):
+    pages: int = 0
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    ocr_seconds: float = 0.0
+    parse_seconds: float = 0.0
+    engine: str = ""  # engine actually used, e.g. "claude+tesseract"
+    ai_pages: int = 0  # pages sent to an AI engine (cost driver)
 
 
 class DocInfo(BaseModel):
@@ -175,6 +196,9 @@ class Project(BaseModel):
     issues: list[Issue] = Field(default_factory=list)
     # Full-text mode progress, keyed "<doc>:<page>" → approved.
     page_status: dict[str, bool] = Field(default_factory=dict)
+    batch_id: str | None = None  # projects uploaded together share a batch id
+    auto_approve: bool = False  # approve clean questions automatically after parsing
+    stats: ProjectStats = Field(default_factory=ProjectStats)
 
 
 class PageTextUpdate(BaseModel):
@@ -193,6 +217,10 @@ class ProjectSummary(BaseModel):
     error: str | None
     mode: str = "questions"
     page_count: int = 0
+    batch_id: str | None = None
+    queue_position: int | None = None  # 1-based position while queued
+    auto_approved_count: int = 0
+    duplicate_count: int = 0
     question_count: int
     approved_count: int
     error_count: int

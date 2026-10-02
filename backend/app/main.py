@@ -81,10 +81,6 @@ def _load(project_id: str) -> Project:
     return store.load(project_id)
 
 
-def _has_explanations(project: Project) -> bool:
-    return any(d.kind == "explanations" for d in project.documents)
-
-
 def _find(project: Project, number: int) -> Question:
     for question in project.questions:
         if question.number == number:
@@ -93,16 +89,9 @@ def _find(project: Project, number: int) -> Question:
 
 
 def _revalidate(project: Project) -> None:
-    from .blueprints import BLUEPRINTS
-    from .validate import validate_project, validate_question
+    from .review import revalidate
 
-    has_expl = _has_explanations(project)
-    for question in project.questions:
-        question.issues = validate_question(question, has_expl)
-    expected = next(
-        (b["question_count"] for b in BLUEPRINTS if b["code"] == project.blueprint), None
-    )
-    project.issues = validate_project(project.questions, has_expl, expected)
+    revalidate(project)
 
 
 def _summary(project: Project) -> ProjectSummary:
@@ -125,6 +114,10 @@ def _summary(project: Project) -> ProjectSummary:
             else sum(q.status == "approved" for q in project.questions)
         ),
         error_count=sum(any(i.level == "error" for i in q.issues) for q in project.questions),
+        batch_id=project.batch_id,
+        queue_position=jobs.queue_position(project.id) if project.status == "queued" else None,
+        auto_approved_count=sum(q.approved_by == "auto" for q in project.questions),
+        duplicate_count=sum(bool(q.duplicates) for q in project.questions),
     )
 
 
@@ -192,37 +185,41 @@ def list_projects():
     return [_summary(p) for p in store.list()]
 
 
-@app.post("/api/projects", response_model=Project)
-async def create_project(
-    booklet: Annotated[list[UploadFile], File()],
-    explanations: Annotated[list[UploadFile] | None, File()] = None,
-    title: Annotated[str, Form()] = "",
-    track: Annotated[Literal["bar", "center", "other"], Form()] = "other",
-    year: Annotated[int | None, Form()] = None,
-    blueprint: Annotated[str, Form()] = "auto",
-    engine: Annotated[EngineName, Form()] = "auto",
-    doc_type: Annotated[DocType, Form()] = "auto",
-    default_subject: Annotated[str, Form()] = "",
-):
+class UploadOptions(BaseModel):
+    track: Literal["bar", "center", "other"] = "other"
+    year: int | None = None
+    blueprint: str = "auto"
+    engine: EngineName = "auto"
+    doc_type: DocType = "auto"
+    default_subject: str = ""
+    auto_approve: bool = False
+
+
+def _validate_options(options: UploadOptions) -> None:
     from .blueprints import SUBJECT_KEYS
 
-    if default_subject and default_subject not in SUBJECT_KEYS:
+    if options.default_subject and options.default_subject not in SUBJECT_KEYS:
         raise HTTPException(400, "درس انتخاب‌شده معتبر نیست.")
-    uploads: list[tuple[DocKind, list[UploadFile]]] = [("booklet", booklet)]
-    explanation_files = [f for f in explanations or [] if f.filename]
-    if explanation_files:
-        uploads.append(("explanations", explanation_files))
 
+
+async def _create(
+    uploads: list[tuple[DocKind, list[UploadFile]]],
+    title: str,
+    options: UploadOptions,
+    batch_id: str | None = None,
+) -> Project:
     project = Project(
         id=uuid.uuid4().hex[:12],
-        title=title.strip() or Path(booklet[0].filename or "دفترچه").stem,
-        track=track,
-        year=year,
-        blueprint=blueprint or "auto",
-        engine=engine,
-        doc_type=doc_type,
-        default_subject=default_subject or None,
-        mode="text" if doc_type == "text" else "questions",
+        title=title.strip() or Path(uploads[0][1][0].filename or "دفترچه").stem,
+        track=options.track,
+        year=options.year,
+        blueprint=options.blueprint or "auto",
+        engine=options.engine,
+        doc_type=options.doc_type,
+        default_subject=options.default_subject or None,
+        mode="text" if options.doc_type == "text" else "questions",
+        auto_approve=options.auto_approve and options.doc_type != "text",
+        batch_id=batch_id,
         created_at=datetime.now(UTC),
     )
     contents = []
@@ -236,6 +233,83 @@ async def create_project(
     store.save(project)
     jobs.submit(project.id)
     return project
+
+
+@app.post("/api/projects", response_model=Project)
+async def create_project(
+    booklet: Annotated[list[UploadFile], File()],
+    explanations: Annotated[list[UploadFile] | None, File()] = None,
+    title: Annotated[str, Form()] = "",
+    track: Annotated[Literal["bar", "center", "other"], Form()] = "other",
+    year: Annotated[int | None, Form()] = None,
+    blueprint: Annotated[str, Form()] = "auto",
+    engine: Annotated[EngineName, Form()] = "auto",
+    doc_type: Annotated[DocType, Form()] = "auto",
+    default_subject: Annotated[str, Form()] = "",
+    auto_approve: Annotated[bool, Form()] = False,
+):
+    options = UploadOptions(
+        track=track,
+        year=year,
+        blueprint=blueprint,
+        engine=engine,
+        doc_type=doc_type,
+        default_subject=default_subject,
+        auto_approve=auto_approve,
+    )
+    _validate_options(options)
+    uploads: list[tuple[DocKind, list[UploadFile]]] = [("booklet", booklet)]
+    explanation_files = [f for f in explanations or [] if f.filename]
+    if explanation_files:
+        uploads.append(("explanations", explanation_files))
+    return await _create(uploads, title, options)
+
+
+MAX_BATCH_FILES = 100
+
+
+@app.post("/api/projects/batch")
+async def create_batch(
+    files: Annotated[list[UploadFile], File()],
+    track: Annotated[Literal["bar", "center", "other"], Form()] = "other",
+    year: Annotated[int | None, Form()] = None,
+    blueprint: Annotated[str, Form()] = "auto",
+    engine: Annotated[EngineName, Form()] = "auto",
+    doc_type: Annotated[DocType, Form()] = "auto",
+    default_subject: Annotated[str, Form()] = "",
+    auto_approve: Annotated[bool, Form()] = False,
+):
+    """Many files at once: every file becomes its own project, queued in upload order."""
+    files = [f for f in files if f.filename]
+    if not files:
+        raise HTTPException(400, "هیچ فایلی انتخاب نشده است.")
+    if len(files) > MAX_BATCH_FILES:
+        raise HTTPException(400, f"حداکثر {MAX_BATCH_FILES} فایل در هر بارگذاری گروهی.")
+    options = UploadOptions(
+        track=track,
+        year=year,
+        blueprint=blueprint,
+        engine=engine,
+        doc_type=doc_type,
+        default_subject=default_subject,
+        auto_approve=auto_approve,
+    )
+    _validate_options(options)
+    batch_id = uuid.uuid4().hex[:8]
+    projects, errors = [], []
+    for upload in files:
+        try:
+            projects.append(await _create([("booklet", [upload])], "", options, batch_id))
+        except HTTPException as exc:  # one bad file must not sink the whole batch
+            errors.append({"filename": upload.filename, "detail": exc.detail})
+    if not projects:
+        raise HTTPException(400, errors[0]["detail"] if errors else "بارگذاری ناموفق بود.")
+    return {"batch_id": batch_id, "projects": projects, "errors": errors}
+
+
+@app.get("/api/queue")
+def queue():
+    return jobs.queue_state()
 
 
 @app.get("/api/projects/{project_id}", response_model=Project)
@@ -300,6 +374,12 @@ def update_question(project_id: str, number: int, update: QuestionUpdate):
             question.classification.topic_confidence = 1.0
         if content_fields & changed:
             question.edited = True
+        if "status" in changed:
+            question.approved_by = "admin" if question.status == "approved" else None
+        elif content_fields & changed and question.approved_by == "auto":
+            # an edit to an auto-approved question sends it back for a human look
+            question.status = "pending"
+            question.approved_by = None
         _revalidate(project)
         store.save(project)
         return question
@@ -435,6 +515,53 @@ def classify(project_id: str, body: ClassifyBody | None = None):
         _revalidate(fresh)
         store.save(fresh)
         return fresh
+
+
+@app.post("/api/projects/{project_id}/auto-approve")
+def auto_approve_project(project_id: str):
+    from .review import auto_approve
+
+    with store.lock(project_id):
+        project = _load(project_id)
+        if project.status != "ready":
+            raise HTTPException(409, "پروژه هنوز آماده نیست.")
+        _revalidate(project)
+        approved = auto_approve(project)
+        store.save(project)
+    return {"approved": approved, "project": project}
+
+
+@app.get("/api/review-queue")
+def review_queue(limit: int = 200, project_id: str | None = None):
+    from .review import queue_items
+
+    return queue_items(store, min(max(limit, 1), 2000), project_id)
+
+
+class KeysBody(BaseModel):
+    keys: str
+    start: int | None = None
+
+
+@app.put("/api/projects/{project_id}/keys", response_model=Project)
+def set_keys(project_id: str, body: KeysBody):
+    from .review import apply_keys, parse_keys
+
+    try:
+        keys = parse_keys(body.keys)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not keys:
+        raise HTTPException(400, "کلیدی وارد نشده است.")
+    with store.lock(project_id):
+        project = _load(project_id)
+        if not project.questions:
+            raise HTTPException(400, "این پروژه سؤالی ندارد.")
+        start = body.start if body.start is not None else min(q.number for q in project.questions)
+        apply_keys(project, keys, start)
+        _revalidate(project)
+        store.save(project)
+        return project
 
 
 class ReparseBody(BaseModel):
@@ -617,6 +744,33 @@ def push(project_id: str, body: PushBody | None = None):
     except SiteImportError as exc:
         raise HTTPException(502, str(exc)) from exc
     return {"ok": True, "questions": len(selected), "response": job}
+
+
+class PushApprovedBody(BaseModel):
+    project_ids: list[str] | None = None
+
+
+@app.post("/api/push-approved")
+def push_approved(body: PushApprovedBody | None = None):
+    """Send the approved questions of several projects to the site, one import job each."""
+    body = body or PushApprovedBody()
+    if not (settings.dadrose_api_url and settings.dadrose_api_token):
+        raise HTTPException(400, "اتصال به سایت پیکربندی نشده است.")
+    ids = body.project_ids or [
+        p.id
+        for p in store.list()
+        if p.status == "ready"
+        and p.mode == "questions"
+        and any(q.status == "approved" for q in p.questions)
+    ]
+    results = []
+    for project_id in ids:
+        try:
+            result = push(project_id, PushBody(only_approved=True))
+            results.append({"project_id": project_id, **result})
+        except HTTPException as exc:
+            results.append({"project_id": project_id, "ok": False, "detail": exc.detail})
+    return results
 
 
 @app.get("/api/site/import-jobs/{job_id}")

@@ -221,3 +221,67 @@ def test_site_check_reports_missing_config(client):
     response = client.get("/api/site/check")
     assert response.status_code == 502
     assert "پیکربندی" in response.json()["detail"]
+
+
+def test_batch_upload_auto_approve_queue_and_keys(client):
+    pdf = fixtures_gen.booklet_pdf()
+    response = client.post(
+        "/api/projects/batch",
+        files=[
+            ("files", ("a.pdf", pdf, "application/pdf")),
+            ("files", ("b.pdf", pdf, "application/pdf")),
+        ],
+        data={"doc_type": "questions", "engine": "offline", "auto_approve": "1"},
+    )
+    assert response.status_code == 200, response.text
+    batch = response.json()
+    assert len(batch["projects"]) == 2 and batch["errors"] == []
+    assert {p["title"] for p in batch["projects"]} == {"a", "b"}
+    assert all(p["batch_id"] == batch["batch_id"] and p["auto_approve"] for p in batch["projects"])
+    a, b = (_wait_ready(client, p["id"]) for p in batch["projects"])
+    assert client.get("/api/queue").json() == {"running": [], "queued": []}
+    assert a["stats"]["pages"] == 1 and a["stats"]["engine"] == "text_layer"
+
+    # the fixture has no answer keys → nothing is clean yet
+    assert all(q["status"] == "pending" for q in a["questions"])
+    queue = client.get(f"/api/review-queue?project_id={a['id']}").json()
+    assert [i["number"] for i in queue] == [1, 2, 3, 4] and queue[0]["level"] == "error"
+    assert "missing_key" in queue[0]["codes"]
+
+    # quick key entry (Persian digits), then auto-approve the clean ones
+    with_keys = client.put(f"/api/projects/{a['id']}/keys", json={"keys": "۲ ۴ ۱ ۳"}).json()
+    assert [q["correct_key"] for q in with_keys["questions"]] == ["2", "4", "1", "3"]
+    assert client.put(f"/api/projects/{a['id']}/keys", json={"keys": "25"}).status_code == 400
+    result = client.post(f"/api/projects/{a['id']}/auto-approve").json()
+    approved = [q for q in result["project"]["questions"] if q["status"] == "approved"]
+    assert result["approved"] == len(approved)
+    assert all(q["approved_by"] == "auto" for q in approved)
+
+    # b is a copy of a: duplicates are detected across projects
+    summaries = {s["id"]: s for s in client.get("/api/projects").json()}
+    assert summaries[a["id"]]["auto_approved_count"] == result["approved"]
+    if b["questions"] and any(q["duplicates"] for q in b["questions"]):
+        assert summaries[b["id"]]["duplicate_count"] >= 1
+
+    # editing an auto-approved question sends it back to review
+    if approved:
+        q = approved[0]
+        edited = client.put(
+            f"/api/projects/{a['id']}/questions/{q['number']}", json={"stem": q["stem"] + " "}
+        ).json()
+        assert edited["status"] == "pending" and edited["approved_by"] is None
+
+
+def test_batch_reports_bad_files_without_failing(client):
+    pdf = fixtures_gen.booklet_pdf()
+    response = client.post(
+        "/api/projects/batch",
+        files=[
+            ("files", ("ok.pdf", pdf, "application/pdf")),
+            ("files", ("bad.pdf", b"nope", "application/pdf")),
+        ],
+        data={"engine": "offline"},
+    )
+    body = response.json()
+    assert len(body["projects"]) == 1 and body["errors"][0]["filename"] == "bad.pdf"
+    _wait_ready(client, body["projects"][0]["id"])
