@@ -26,6 +26,7 @@ _MULTI_ZWNJ = re.compile(f"{ZWNJ}{{2,}}")
 _ZWNJ_SPACE = re.compile(rf"[ \t]*{ZWNJ}[ \t]+|[ \t]+{ZWNJ}[ \t]*|^{ZWNJ}+|{ZWNJ}+$", re.M)
 _MI_PREFIX = re.compile(rf"(?<![\w{ZWNJ}])(ن?می) +(?=[{_AR_LETTER}])")
 _QMARK = re.compile(r"(?<=[؀-ۿ‌])[ \t]*\?")
+_SPACE_BEFORE_PUNCT = re.compile(r"[ \t]+(?=[؟،؛!])")
 _HSPACE = re.compile(r"[^\S\n]+")
 _NEWLINES = re.compile(r" *\n[\s]*")
 
@@ -53,6 +54,7 @@ def normalize_text(s: str) -> str:
     s = _ZWNJ_SPACE.sub(lambda m: "" if m.group(0).strip(" \t") == m.group(0) else " ", s)
     s = _MI_PREFIX.sub(lambda m: m.group(1) + ZWNJ, s)
     s = _QMARK.sub("؟", s)
+    s = _SPACE_BEFORE_PUNCT.sub("", s)
     s = _NEWLINES.sub("\n", s)
     return s.strip()
 
