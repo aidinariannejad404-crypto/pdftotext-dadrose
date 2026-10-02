@@ -24,9 +24,17 @@ Playwright uses the pre-installed Chromium (`PLAYWRIGHT_BROWSERS_PATH`); `@playw
 2. Review: actionable issue sentences (click → focuses the field), suspicious-word cards («X یا Y؟» → keep / use alternative, persisted via `PUT … {flags}`), «خطای بعدی» (F8 / Alt+N), help dialog (`?`), completion card with the Word download + import steps.
 3. Export: «دانلود فایل Word» (`/export.docx`, the site's «ورود هوشمند از ورد» template) is the primary action; JSON and direct push live in «بیشتر» (push disabled unless `health.push_configured`).
 
+## Two review modes
+
+`Project.mode` decides the review screen at `#/p/:id`:
+
+- **questions** (`ReviewPage` + `Editor`): exam booklets / test books — questions, options, key, explanation, «منبع سؤال» (`source_ref`).
+- **text** (`TextReview`): notes banks, lecture notes, books — page-by-page full-text editor (`GET/PUT /pages/{doc}/{page}/text`, autosave, «بازگردانی متن اصلی» = `text: null`), page thumbnails, «تأیید و صفحه‌ی بعد», «صفحه‌ی مشکوک بعدی», Word/TXT export (`export-text.docx`, `export.txt`). Suspicious words come from the page's OCR `Word.flag/alt` and are highlighted in the editor and on the image.
+- Switch with «بیشتر» → «نمایش به‌صورت متن کامل» / «تبدیل به حالت سؤال» (`POST /mode`). Upload sends `doc_type` (auto / questions / text).
+
 ## Mock (`mock/`)
 
-`vite --mode mock` registers `mock/plugin.ts` as dev-server middleware implementing every endpoint in `docs/ARCHITECTURE.md` with in-memory state: one ready project (`demo`, 10 Persian questions, Q8 missing, flags/issues/explanations), one stuck in OCR, one failed. Uploads (multiple files per field) finish "processing" in ~9 s; `export.docx` returns dummy bytes; `push_configured` is false. Page images are SVGs generated from the same layout as the OCR word boxes, so overlays line up. `POST /api/__mock/reset` restores the seed.
+`vite --mode mock` registers `mock/plugin.ts` as dev-server middleware implementing every endpoint in `docs/ARCHITECTURE.md` with in-memory state: one ready project (`demo`, 10 Persian questions, Q8 missing, flags/issues/explanations), one stuck in OCR, one failed, and a text-mode project `notes` («بانک نکات حقوق مدنی», 3 pages). Uploads (multiple files per field) finish "processing" in ~9 s; `export.docx` returns dummy bytes; `push_configured` is false. Page images are SVGs generated from the same layout as the OCR word boxes, so overlays line up. `POST /api/__mock/reset` restores the seed.
 
 ## Structure
 

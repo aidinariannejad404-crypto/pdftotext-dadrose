@@ -10,6 +10,7 @@ export interface Draft {
   options: Option[];
   correct_key: string | null;
   explanation: string;
+  source_ref: string;
   flags: Flag[]; // remaining suspicious words (resolved ones are removed locally, then PUT)
 }
 
@@ -24,6 +25,7 @@ export function draftFrom(q: Question): Draft {
     options: [...KEYS.map((key) => ({ key, text: byKey.get(key) ?? '' })), ...extra],
     correct_key: q.correct_key,
     explanation: q.explanation,
+    source_ref: q.source_ref ?? '',
     flags: q.flags,
   };
 }
@@ -35,6 +37,7 @@ function toUpdate(d: Draft, withFlags: boolean): QuestionUpdate {
     options: d.options,
     correct_key: d.correct_key,
     explanation: d.explanation,
+    source_ref: d.source_ref,
   };
   if (withFlags) u.flags = d.flags;
   return u;

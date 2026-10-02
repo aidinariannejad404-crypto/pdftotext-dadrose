@@ -118,7 +118,12 @@ def _summary(project: Project) -> ProjectSummary:
         mode=project.mode,
         page_count=sum(d.page_count for d in project.documents),
         question_count=len(project.questions),
-        approved_count=sum(q.status == "approved" for q in project.questions),
+        # text mode counts approved pages, question mode approved questions
+        approved_count=(
+            sum(project.page_status.values())
+            if project.mode == "text"
+            else sum(q.status == "approved" for q in project.questions)
+        ),
         error_count=sum(any(i.level == "error" for i in q.issues) for q in project.questions),
     )
 
@@ -187,7 +192,12 @@ async def create_project(
     blueprint: Annotated[str, Form()] = "auto",
     engine: Annotated[EngineName, Form()] = "auto",
     doc_type: Annotated[DocType, Form()] = "auto",
+    default_subject: Annotated[str, Form()] = "",
 ):
+    from .blueprints import SUBJECT_KEYS
+
+    if default_subject and default_subject not in SUBJECT_KEYS:
+        raise HTTPException(400, "درس انتخاب‌شده معتبر نیست.")
     uploads: list[tuple[DocKind, list[UploadFile]]] = [("booklet", booklet)]
     explanation_files = [f for f in explanations or [] if f.filename]
     if explanation_files:
@@ -201,6 +211,7 @@ async def create_project(
         blueprint=blueprint or "auto",
         engine=engine,
         doc_type=doc_type,
+        default_subject=default_subject or None,
         mode="text" if doc_type == "text" else "questions",
         created_at=datetime.now(UTC),
     )
@@ -341,6 +352,13 @@ def reocr_question(project_id: str, number: int, body: ReocrBody | None = None):
         question.stem = parsed.stem
         if parsed.options:
             question.options = parsed.options
+        if parsed.source_ref:
+            question.source_ref = parsed.source_ref
+        if parsed.explanation and not any(r.doc == "explanations" for r in question.regions):
+            question.explanation = parsed.explanation
+        if parsed.correct_key and question.key_source in (None, "inline"):
+            question.correct_key = parsed.correct_key
+            question.key_source = parsed.key_source
         question.flags = [f for f in question.flags if f.doc != "booklet"] + parsed.flags
         question.status = "pending"
         question.edited = False

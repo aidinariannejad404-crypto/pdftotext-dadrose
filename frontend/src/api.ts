@@ -1,5 +1,5 @@
 import type {
-  DocKind, EngineName, Health, Meta, PageResult, Project, ProjectSummary, PushResult, Question, QuestionUpdate,
+  DocKind, EngineName, Health, Meta, PageResult, PageText, PageTextUpdate, Project, ReviewMode, ProjectSummary, PushResult, Question, QuestionUpdate,
 } from './types';
 
 export class ApiError extends Error {
@@ -66,6 +66,11 @@ export const api = {
     request<Question>('POST', `/api/projects/${enc(id)}/questions/${n}/reocr`, { engine }),
   reparse: (id: string, blueprint?: string) =>
     request<Project>('POST', `/api/projects/${enc(id)}/reparse`, blueprint ? { blueprint } : {}),
+  pageText: (id: string, doc: DocKind, page: number) =>
+    request<PageText>('GET', `/api/projects/${enc(id)}/pages/${doc}/${page}/text`),
+  updatePageText: (id: string, doc: DocKind, page: number, upd: PageTextUpdate) =>
+    request<PageText>('PUT', `/api/projects/${enc(id)}/pages/${doc}/${page}/text`, upd),
+  setMode: (id: string, mode: ReviewMode) => request<Project>('POST', `/api/projects/${enc(id)}/mode`, { mode }),
   push: (id: string, onlyApproved: boolean) =>
     request<PushResult>('POST', `/api/projects/${enc(id)}/push`, { only_approved: onlyApproved }),
 };
@@ -76,6 +81,12 @@ export function pageImageUrl(id: string, doc: DocKind, page: number, orig = fals
 
 export function exportUrl(id: string, onlyApproved: boolean, format: 'json' | 'docx' = 'json'): string {
   return `/api/projects/${enc(id)}/export.${format}${onlyApproved ? '?only_approved=1' : ''}`;
+}
+
+/** Whole-document text export (text mode): Word or plain text. */
+export function exportTextUrl(id: string, onlyApproved: boolean, format: 'docx' | 'txt'): string {
+  const path = format === 'docx' ? 'export-text.docx' : 'export.txt';
+  return `/api/projects/${enc(id)}/${path}${onlyApproved ? '?only_approved=1' : ''}`;
 }
 
 /** Multipart upload with progress (XHR, since fetch has no upload progress). */

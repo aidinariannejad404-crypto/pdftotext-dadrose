@@ -8,8 +8,8 @@ test('projects page lists projects and opens review', async ({ page }) => {
   await page.goto('/#/');
   await expect(page.getByRole('heading', { name: 'پروژه‌ها' })).toBeVisible();
   const rows = page.getByTestId('project-row');
-  await expect(rows).toHaveCount(3);
-  await expect(page.getByText('آماده‌ی بازبینی')).toBeVisible();
+  await expect(rows).toHaveCount(4);
+  await expect(page.getByText('آماده‌ی بازبینی').first()).toBeVisible();
   await page.getByRole('link', { name: 'آزمون کانون وکلا ۱۴۰۳' }).click();
   await expect(page).toHaveURL(/#\/p\/demo/);
   // starts on the first not-approved question (Q1 is approved in the seed)
@@ -18,6 +18,7 @@ test('projects page lists projects and opens review', async ({ page }) => {
 
 test('simplified upload: explains what is missing, auto-fills title and blueprint, accepts several images', async ({ page }) => {
   await page.goto('/#/');
+  await page.getByTestId('doc-type-questions').click();
   // aria-disabled (not disabled) so clicking still explains what is missing
   await page.getByTestId('submit-upload').click({ force: true });
   await expect(page.getByTestId('submit-reason')).toContainText('فایل دفترچه را انتخاب کنید');
@@ -220,4 +221,87 @@ test('Word download is the primary export; push is disabled when not configured'
   await expect(page.getByTestId('menu-push')).toHaveAttribute('aria-disabled', 'true');
   await expect(page.getByTestId('menu-push')).toContainText('پیکربندی نشده');
   await expect(page.getByTestId('menu-json')).toHaveAttribute('href', /export\.json/);
+});
+
+test('upload as full text hides exam fields and requires only files + title', async ({ page }) => {
+  await page.goto('/#/');
+  await page.getByTestId('doc-type-text').click();
+  await expect(page.locator('#up-year')).toHaveCount(0);
+  await expect(page.getByTestId('drop-explanations')).toHaveCount(0);
+  await page.locator('#drop-booklet-input').setInputFiles({
+    name: 'jozve-madani.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4'),
+  });
+  await expect(page.getByTestId('title-input')).toHaveValue('jozve madani');
+  await page.getByTestId('title-input').fill('جزوه‌ی مدنی');
+  await expect(page.getByTestId('submit-reason')).toHaveCount(0);
+  await page.getByTestId('submit-upload').click();
+  await expect(page.getByTestId('project-row').filter({ hasText: 'جزوه‌ی مدنی' })).toBeVisible();
+  const list = await (await page.request.get('/api/projects')).json();
+  const created = list.find((p: { title: string }) => p.title === 'جزوه‌ی مدنی');
+  const full = await (await page.request.get(`/api/projects/${created.id}`)).json();
+  expect(full.doc_type).toBe('text');
+  const row = page.getByTestId('project-row').filter({ hasText: 'جزوه‌ی مدنی' });
+  await expect(row.getByText('متن کامل')).toBeVisible({ timeout: 15_000 });
+});
+
+test('question mode shows editable source of the question', async ({ page }) => {
+  await page.goto('/#/p/demo?q=3');
+  const src = page.locator('input[data-field="source_ref"]');
+  await expect(src).toHaveValue('ارشد سراسری-۷۸');
+  await src.fill('ارشد سراسری-۷۹');
+  await expect(page.getByTestId('save-state')).toHaveText(/ذخیره شد/, { timeout: 5000 });
+  const project = await (await page.request.get('/api/projects/demo')).json();
+  expect(project.questions.find((q: { number: number }) => q.number === 3).source_ref).toBe('ارشد سراسری-۷۹');
+});
+
+test('text mode: edit with highlights, autosave, approve and next, revert', async ({ page }) => {
+  await page.goto('/#/p/notes');
+  // page 1 is approved in the seed → starts on page 2
+  await expect(page.getByTestId('current-page')).toHaveText('صفحه‌ی ۲');
+  await expect(page.getByTestId('pages-approved')).toHaveText('۱');
+  const editor = page.locator('textarea[data-field="text"]');
+  await expect(editor).toHaveValue(/شرایط اساسی صحت معامله/);
+  // flagged OCR words are highlighted inside the editor
+  await expect(page.locator('.text-editor mark.hl-disagree').first()).toHaveText('اهلیت');
+  await expect(page.locator('.text-editor mark.hl-low_conf')).toHaveText('باطناً');
+  await page.getByTestId('text-flags').getByRole('button', { name: /اهلیت/ }).click();
+  await expect(page.locator('[data-testid="ov-flag"].is-active')).toBeVisible();
+
+  await editor.fill('متن اصلاح‌شده‌ی صفحه‌ی دوم');
+  await expect(page.getByTestId('save-state')).toHaveText(/ذخیره شد/, { timeout: 5000 });
+  let t = await (await page.request.get('/api/projects/notes/pages/booklet/1/text')).json();
+  expect(t).toMatchObject({ text: 'متن اصلاح‌شده‌ی صفحه‌ی دوم', edited: true });
+
+  // revert
+  await page.getByTestId('revert-text').click();
+  await page.getByTestId('confirm-revert').click();
+  await expect(editor).toHaveValue(/شرایط اساسی صحت معامله/);
+  t = await (await page.request.get('/api/projects/notes/pages/booklet/1/text')).json();
+  expect(t.edited).toBe(false);
+
+  // approve → next page
+  await page.getByTestId('approve-page').click();
+  await expect(page.getByTestId('current-page')).toHaveText('صفحه‌ی ۳');
+  await expect(page.getByTestId('pages-approved')).toHaveText('۲');
+  await expect(page.getByTestId('page-booklet:1')).toHaveAttribute('data-approved', 'true');
+  await page.keyboard.press('Control+Enter');
+  await expect(page.getByTestId('done-card')).toBeVisible();
+  await expect(page.getByTestId('done-card').getByTestId('download-word')).toHaveAttribute('href', /export-text\.docx/);
+});
+
+test('text mode: next suspicious page and switching modes', async ({ page }) => {
+  await page.goto('/#/p/notes?pg=booklet:2');
+  await expect(page.getByTestId('current-page')).toHaveText('صفحه‌ی ۳');
+  await page.getByTestId('next-suspicious').first().click();
+  await expect(page.getByTestId('current-page')).toHaveText('صفحه‌ی ۲'); // page 1 approved, page 2 has flags
+  await page.getByTestId('more-menu').click();
+  await expect(page.getByTestId('menu-txt')).toHaveAttribute('href', /export\.txt/);
+  await page.getByTestId('menu-mode').click();
+  await page.getByTestId('confirm-mode').click();
+  await expect(page.getByText('در این فایل سؤال تستی پیدا نشد.')).toBeVisible();
+  // and back to text from question mode
+  await page.getByTestId('more-menu').click();
+  await page.getByTestId('menu-mode').click();
+  await page.getByTestId('confirm-mode').click();
+  await expect(page.getByTestId('current-page')).toBeVisible();
 });

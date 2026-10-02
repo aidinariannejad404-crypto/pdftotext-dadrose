@@ -136,6 +136,8 @@ class Project(BaseModel):
     year: int | None = None
     blueprint: str = "auto"  # blueprint code (see app.blueprints) or "auto"
     doc_type: DocType = "auto"  # what the admin chose at upload
+    # Subject for questions the blueprint/headings can't place (e.g. a one-subject test book).
+    default_subject: str | None = None
     mode: Literal["questions", "text"] = "questions"  # resolved review mode
     engine: EngineName = "auto"
     created_at: datetime

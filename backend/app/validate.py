@@ -26,15 +26,22 @@ _KEY_WORDS = {
     "چهارم": "4",
 }
 _KEY_VALUE = r"[«\"'(\[]?\s*([1-4]|الف|چهارم|چهار|سوم|دوم|اول|یک|سه|دو|ب|ج|د)(?![\w])[»\"')\]]?"
-_OPTION_WORD = r"گزینه[\u200c\s]*(?:ی\s*)?(?:شماره\s*)?"
+_OPTION_WORD = r"گزینه[‌\s]*(?:ی\s*)?(?:شماره\s*)?"
+_CORRECT = r"\s*(?:درست|صحیح)(?!\s*نیست)"
+_ANSWER_WORD = r"(?:پاسخ|جواب)\s*(?:صحیح|درست)?\s*"
+# Any mention of an option near the beginning of an explanation.
 _STATED_KEY = [
     re.compile(_OPTION_WORD + _KEY_VALUE),
-    re.compile(r"(?:پاسخ|جواب)\s*(?:صحیح|درست)?\s*[:：]?\s*(?:گزینه\s*)?" + _KEY_VALUE),
+    re.compile(_ANSWER_WORD + r"[:：]?\s*(?:گزینه\s*)?" + _KEY_VALUE),
 ]
-# Unambiguous statements accepted anywhere (e.g. after a repeated question text).
+# Explicit statements ("گزینه‌ی «د» درست است", "پاسخ: ۲"); "نادرست" never matches.
 _STRONG_KEY = [
-    re.compile(_OPTION_WORD + _KEY_VALUE + r"\s*(?:صحیح|درست)"),
-    re.compile(r"(?:پاسخ|جواب)\s*(?:صحیح|درست)?\s*[:：]\s*(?:گزینه\s*)?" + _KEY_VALUE),
+    re.compile(r"(?<!\w)" + _OPTION_WORD + _KEY_VALUE + _CORRECT),
+    re.compile(r"(?<!\w)" + _ANSWER_WORD + r"[:：]\s*(?:" + _OPTION_WORD + r")?" + _KEY_VALUE),
+]
+_INLINE_KEY = [
+    re.compile(r"^(?:" + _ANSWER_WORD + r"[:：]?\s*)?" + _OPTION_WORD + _KEY_VALUE + _CORRECT),
+    re.compile(r"^" + _ANSWER_WORD + r"[:：]\s*(?:" + _OPTION_WORD + r")?" + _KEY_VALUE),
 ]
 
 
@@ -42,18 +49,33 @@ def _key_value(m: re.Match[str]) -> str:
     return _KEY_WORDS.get(m.group(1), m.group(1))
 
 
-def stated_key(explanation: str, window: int = 200) -> str | None:
-    """The correct option an explanation states ("گزینه ۳ صحیح است", "پاسخ: ۲").
+def _prepare(text: str) -> str:
+    return to_ascii_digits(normalize_text(text))
 
-    Any mention of an option near the beginning counts; further in, only explicit
-    statements do.
+
+def stated_key(explanation: str, window: int = 200) -> str | None:
+    """The correct option an explanation states.
+
+    An explicit statement anywhere wins ("گزینه ۳ صحیح است", "پاسخ: ۲"); otherwise
+    any mention of an option near the beginning counts.
     """
-    text = to_ascii_digits(normalize_text(explanation))
-    head = text[:window]
-    hits = [m for p in _STATED_KEY if (m := p.search(head))]
+    text = _prepare(explanation)
+    hits = [m for p in _STRONG_KEY if (m := p.search(text))]
     if not hits:
-        hits = [m for p in _STRONG_KEY if (m := p.search(text))]
+        head = text[:window]
+        hits = [m for p in _STATED_KEY if (m := p.search(head))]
     return _key_value(min(hits, key=lambda m: m.start())) if hits else None
+
+
+def inline_key_statement(line: str) -> str | None:
+    """Key when `line` *starts* with an answer statement, as test books print right
+    after the options ("گزینه‌ی «د» درست است.", "پاسخ: گزینه ۴", "جواب: ج")."""
+    text = _prepare(line)
+    for pattern in _INLINE_KEY:
+        m = pattern.match(text)
+        if m:
+            return _key_value(m)
+    return None
 
 
 def _issue(level: str, code: str, message: str, field: str | None = None) -> Issue:
@@ -152,7 +174,7 @@ def validate_question(q: Question, has_explanations: bool) -> list[Issue]:
                 _issue(
                     "error",
                     "key_mismatch",
-                    f"کلید جدول ({to_persian_digits(q.correct_key)}) با پاسخ تشریحی "
+                    f"کلید ({to_persian_digits(q.correct_key)}) با پاسخ تشریحی "
                     f"(گزینه {to_persian_digits(expl_key)}) مغایرت دارد.",
                     "explanation",
                 )
@@ -207,7 +229,11 @@ def validate_project(
                 "هیچ پاسخ تشریحی با سؤال‌ها تطبیق داده نشد.",
             )
         )
-    if questions and not any(q.key_source == "table" for q in questions):
+    if (
+        questions
+        and not any(q.key_source == "table" for q in questions)
+        and not all(q.correct_key for q in questions)
+    ):
         issues.append(
             _issue("warning", "key_table_missing", "جدول کلید سؤالات در دفترچه پیدا نشد.")
         )

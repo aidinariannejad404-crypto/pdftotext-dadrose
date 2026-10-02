@@ -18,6 +18,7 @@ def make_project() -> Project:
         correct_key="3",
         explanation="گزینه ۳ صحیح است.\nطبق ماده ۲۳۲ قانون مدنی",
         status="approved",
+        source_ref="ارشد سراسری-۸۸",
     )
     q2 = Question(number=1, subject_key="civil", stem="سؤال اول", status="pending")
     return Project(
@@ -48,7 +49,9 @@ def test_payload_shape():
         "options",
         "correct_key",
         "explanation_html",
+        "source_ref",
     }
+    assert q["source_ref"] == "ارشد سراسری-۸۸"
     assert q["stem_html"] == "<p>در عقد بیع &lt;شرط&gt; باطل کدام است؟</p>"
     assert q["options"][0] == {"key": "1", "order": 1, "text_html": "گزینه 1 &amp; متن"}
     assert [o["order"] for o in q["options"]] == [1, 2, 3, 4]

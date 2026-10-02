@@ -274,8 +274,11 @@ for (const q of SEED) {
   flagsByQ.set(q.number, flags);
 }
 
-export function pageResult(doc: DocKind, index: number): PageResult | null {
-  const page = pages.find((p) => p.doc === doc && p.index === index);
+export type PageSet = 'exam' | 'notes';
+const setPages = (set: PageSet) => (set === 'notes' ? notesPages : pages);
+
+export function pageResult(doc: DocKind, index: number, set: PageSet = 'exam'): PageResult | null {
+  const page = setPages(set).find((p) => p.doc === doc && p.index === index);
   if (!page) return null;
   const lines: Line[] = page.lines.map((l) => ({
     page: index,
@@ -286,12 +289,14 @@ export function pageResult(doc: DocKind, index: number): PageResult | null {
     index, width: PAGE_W, height: PAGE_H, source: 'ocr', engine: 'claude+tesseract',
     preprocess: ['page_detect', 'perspective', 'deskew', 'shadow_removal', 'contrast'],
     lines,
-    warnings: doc === 'booklet' && index === 1 ? ['کیفیت اسکن پایین است؛ برخی کلمات با اطمینان کم خوانده شدند.'] : [],
+    edited_text: null,
+    approved: false,
+    warnings: set === 'exam' && doc === 'booklet' && index === 1 ? ['کیفیت اسکن پایین است؛ برخی کلمات با اطمینان کم خوانده شدند.'] : [],
   };
 }
 
-export function pageCount(doc: DocKind): number {
-  return pages.filter((p) => p.doc === doc).length;
+export function pageCount(doc: DocKind, set: PageSet = 'exam'): number {
+  return setPages(set).filter((p) => p.doc === doc).length;
 }
 
 let fontDataUri: string | null = null;
@@ -302,8 +307,8 @@ export function setFontData(b64: string) {
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 /** SVG standing in for the page JPEG. `orig` simulates the raw phone scan. */
-export function pageSvg(doc: DocKind, index: number, orig: boolean): string | null {
-  const page = pages.find((p) => p.doc === doc && p.index === index);
+export function pageSvg(doc: DocKind, index: number, orig: boolean, set: PageSet = 'exam'): string | null {
+  const page = setPages(set).find((p) => p.doc === doc && p.index === index);
   if (!page) return null;
   const font = fontDataUri ? `@font-face{font-family:Vz;src:url(${fontDataUri}) format('woff2');}` : '';
   const words = page.lines
@@ -332,6 +337,100 @@ export function pageSvg(doc: DocKind, index: number, orig: boolean): string | nu
 <linearGradient id="shade" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.28"/></linearGradient></defs>
 ${content}
 </svg>`;
+}
+
+// -------------------------------------------------------------- notes (text mode)
+
+interface NotesPage {
+  heading: string;
+  blocks: { text: string; bold?: boolean }[];
+  flags: { word: string; reason: WordFlag; alt?: string }[];
+}
+
+const NOTES: NotesPage[] = [
+  {
+    heading: 'بانک نکات حقوق مدنی — فصل اول: اموال و مالکیت',
+    blocks: [
+      { text: 'نکته ۱: مال غیرمنقول', bold: true },
+      { text: 'مال غیرمنقول آن است که از محلی به محل دیگر نتوان نقل نمود اعم از اینکه استقرار آن ذاتی باشد یا به واسطه‌ی عمل انسان؛ به نحوی که نقل آن مستلزم خرابی یا نقص خود مال یا محل آن شود.' },
+      { text: 'نکته ۲: حق انتفاع', bold: true },
+      { text: 'انتفاع عبارت از حقی است که به موجب آن شخص می‌تواند از مالی که عین آن ملک دیگری است یا مالک خاصی ندارد استفاده کند. عمری، رقبی و سکنی از اقسام حق انتفاع هستند.' },
+      { text: 'نکته ۳: ارتفاق', bold: true },
+      { text: 'ارتفاق حقی است برای شخص در ملک دیگری؛ مانند حق عبور و حق مجرا. صاحب ملک نمی‌تواند مانع استفاده‌ی صاحب حق شود.' },
+    ],
+    flags: [
+      { word: 'مستلزم', reason: 'disagree', alt: 'مستلرم' },
+      { word: 'رقبی', reason: 'low_conf' },
+    ],
+  },
+  {
+    heading: 'فصل دوم: قراردادها',
+    blocks: [
+      { text: 'نکته ۴: شرایط اساسی صحت معامله', bold: true },
+      { text: 'برای صحت هر معامله شرایط ذیل اساسی است: قصد طرفین و رضای آن‌ها، اهلیت طرفین، معین بودن موضوع معامله و مشروعیت جهت معامله.' },
+      { text: 'نکته ۵: معامله‌ی فضولی', bold: true },
+      { text: 'معامله به مال غیر جز به عنوان ولایت یا وصایت یا وکالت نافذ نیست، ولو اینکه صاحب مال باطناً راضی باشد؛ ولی اگر مالک بعد از وقوع معامله آن را اجازه نمود در این صورت معامله صحیح و نافذ می‌شود.' },
+    ],
+    flags: [
+      { word: 'اهلیت', reason: 'disagree', alt: 'اهليت' },
+      { word: 'باطناً', reason: 'low_conf' },
+      { word: 'وصایت', reason: 'disagree', alt: 'وصاپت' },
+    ],
+  },
+  {
+    heading: 'فصل سوم: الزامات خارج از قرارداد',
+    blocks: [
+      { text: 'نکته ۶: غصب', bold: true },
+      { text: 'غصب استیلا بر حق غیر است به نحو عدوان. اثبات ید بر مال غیر بدون مجوز هم در حکم غصب است.' },
+      { text: 'نکته ۷: اتلاف', bold: true },
+      { text: 'هر کس مال غیر را تلف کند ضامن آن است و باید مثل یا قیمت آن را بدهد، اعم از اینکه از روی عمد تلف کرده باشد یا بدون عمد.' },
+    ],
+    flags: [],
+  },
+];
+
+const notesPages: PageLayout[] = [];
+const notesText: string[] = [];
+
+(function buildNotes() {
+  NOTES.forEach((n, i) => {
+    const page: PageLayout = { doc: 'booklet', index: i, lines: [], heading: n.heading };
+    let y = 230;
+    for (const b of n.blocks) {
+      const ls = layoutText(b.text, y, 0, undefined, undefined);
+      if (b.bold) ls.forEach((l) => (l.bold = true));
+      page.lines.push(...ls);
+      y += ls.length * LINE_H + (b.bold ? 4 : 20);
+    }
+    for (const f of n.flags) {
+      for (const l of page.lines) {
+        const w = l.words.find((x) => x.text.replace(/[.،؛:]$/, '') === f.word && !x.flag);
+        if (w) {
+          w.flag = f.reason;
+          w.alt = f.alt ?? null;
+          w.conf = f.reason === 'low_conf' ? 38 : 70;
+          break;
+        }
+      }
+    }
+    notesPages.push(page);
+    notesText.push([n.heading, ...n.blocks.map((b) => b.text)].join('\n\n'));
+  });
+})();
+
+/** The auto-reflowed OCR text of a notes page (what GET …/text returns before edits). */
+export function notesPageText(index: number): string {
+  return notesText[index] ?? '';
+}
+
+export function makeTextProject(id: string, title: string, createdAt: string): Project {
+  return {
+    id, title, track: 'other', year: null, blueprint: 'auto', doc_type: 'text', mode: 'text', engine: 'auto',
+    created_at: createdAt, status: 'ready', progress: { stage: 'done', done: NOTES.length, total: NOTES.length },
+    error: null,
+    documents: [{ kind: 'booklet', filename: 'bank-nokat-madani.pdf', page_count: NOTES.length }],
+    questions: [], issues: [], page_status: { 'booklet:0': true },
+  };
 }
 
 // ---------------------------------------------------------------- questions
@@ -363,7 +462,8 @@ export function seedQuestions(): Question[] {
       stem: s.stem,
       options: s.options.map((t, i) => ({ key: String(i + 1), text: t })),
       correct_key: s.key,
-      key_source: s.keySource,
+      key_source: s.number === 9 ? 'inline' : s.keySource,
+      source_ref: s.number === 3 ? 'ارشد سراسری-۷۸' : s.number === 9 ? 'وکالت ۱۴۰۰' : '',
       explanation: s.explanation,
       regions: (regionsByQ.get(s.number) ?? []).map((r) => ({ doc: r.doc, page: r.page, bbox: norm(r.px) })),
       flags: structuredClone(flagsByQ.get(s.number) ?? []),
@@ -385,7 +485,8 @@ export function seedProjectIssues(): Issue[] {
 
 export function makeReadyProject(id: string, title: string, createdAt: string): Project {
   return {
-    id, title, track: 'bar', year: 1403, blueprint: 'BAR-1405', engine: 'auto', created_at: createdAt,
+    id, title, track: 'bar', year: 1403, blueprint: 'BAR-1405', doc_type: 'auto', mode: 'questions', page_status: {},
+    engine: 'auto', created_at: createdAt,
     status: 'ready', progress: { stage: 'done', done: 3, total: 3 }, error: null,
     documents: [
       { kind: 'booklet', filename: 'kanoon-1403-camscanner.pdf', page_count: pageCount('booklet') },

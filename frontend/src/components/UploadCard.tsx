@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from 'react';
 import { createProject } from '../api';
 import { useAppData } from '../appData';
-import type { Blueprint, EngineName, Track } from '../types';
+import type { Blueprint, DocType, EngineName, Track } from '../types';
 import { ENGINE_LABELS, TRACK_LABELS, cx, fa, toAsciiDigits } from '../util';
 import { Icon } from './Icons';
 import { useToast } from './Toasts';
@@ -204,6 +204,7 @@ function FileZone({
 export default function UploadCard({ onCreated }: { onCreated: () => void }) {
   const { meta, health, engineAvailable } = useAppData();
   const toast = useToast();
+  const [docType, setDocType] = useState<DocType>('auto');
   const [booklet, setBooklet] = useState<Picked[]>([]);
   const [explanations, setExplanations] = useState<Picked[]>([]);
   const [title, setTitle] = useState('');
@@ -223,7 +224,11 @@ export default function UploadCard({ onCreated }: { onCreated: () => void }) {
   const blueprintInfo = meta?.blueprints.find((b) => b.code === blueprint);
 
   const firstName = booklet[0]?.file.name.replace(/\.[a-z0-9]+$/i, '').replace(/[-_]+/g, ' ') ?? '';
-  const autoTitle = yearValid
+  const isText = docType === 'text';
+  const needsExam = docType === 'questions';
+  const autoTitle = isText
+    ? firstName
+    : yearValid
     ? track === 'other'
       ? `آزمون ${fa(yearNum)}`
       : `آزمون ${TRACK_LABELS[track]} ${fa(yearNum)}`
@@ -236,8 +241,10 @@ export default function UploadCard({ onCreated }: { onCreated: () => void }) {
 
   const totalBytes = [...booklet, ...explanations].reduce((s, p) => s + p.file.size, 0);
   const missing: string[] = [];
-  if (!booklet.length) missing.push('فایل دفترچه را انتخاب کنید');
-  if (!yearValid) missing.push(year ? 'سال را درست وارد کنید (مثلاً ۱۴۰۴)' : 'سال آزمون را وارد کنید');
+  if (!booklet.length) missing.push(isText ? 'فایل را انتخاب کنید' : 'فایل دفترچه را انتخاب کنید');
+  if (!isText && year && !yearValid) missing.push('سال را درست وارد کنید (مثلاً ۱۴۰۴)');
+  else if (needsExam && !yearValid) missing.push('سال آزمون را وارد کنید');
+  if (isText && booklet.length && !(shownTitle || autoTitle).trim()) missing.push('عنوان را وارد کنید');
   if (totalBytes > MAX_TOTAL_BYTES) missing.push('حجم فایل‌ها بیش از ۲۰۰ مگابایت است');
   const canSubmit = missing.length === 0 && uploading === null;
 
@@ -258,11 +265,12 @@ export default function UploadCard({ onCreated }: { onCreated: () => void }) {
     if (!canSubmit) return;
     const form = new FormData();
     booklet.forEach((p) => form.append('booklet', p.file, p.file.name));
-    explanations.forEach((p) => form.append('explanations', p.file, p.file.name));
+    if (!isText) explanations.forEach((p) => form.append('explanations', p.file, p.file.name));
+    form.append('doc_type', docType);
     form.append('title', (shownTitle || autoTitle || booklet[0].file.name).trim());
-    form.append('track', track);
-    form.append('year', String(yearNum));
-    form.append('blueprint', blueprint);
+    form.append('track', isText ? 'other' : track);
+    if (!isText && yearValid) form.append('year', String(yearNum));
+    form.append('blueprint', isText ? 'auto' : blueprint);
     form.append('engine', engine);
     setUploading(0);
     try {
@@ -289,32 +297,65 @@ export default function UploadCard({ onCreated }: { onCreated: () => void }) {
     <form className="card upload-card" onSubmit={submit} aria-labelledby="upload-title" noValidate>
       <div className="card-head">
         <h2 id="upload-title" className="card-title">
-          بارگذاری دفترچه‌ی جدید
+          بارگذاری فایل جدید
         </h2>
       </div>
 
-      <div className="dropzones">
+      <fieldset className="doc-type">
+        <legend className="field-label">نوع محتوا</legend>
+        <div className="doc-type-options" role="radiogroup" aria-label="نوع محتوا">
+          {(
+            [
+              ['auto', 'تشخیص خودکار', 'سیستم خودش تشخیص می‌دهد'],
+              ['questions', 'سؤال تستی', 'دفترچه‌ی آزمون، کتاب تست'],
+              ['text', 'متن کامل', 'بانک نکات، جزوه، کتاب'],
+            ] as [DocType, string, string][]
+          ).map(([v, t, h]) => (
+            <button
+              key={v}
+              type="button"
+              role="radio"
+              aria-checked={docType === v}
+              className={cx('doc-type-option', docType === v && 'is-on')}
+              onClick={() => setDocType(v)}
+              data-testid={`doc-type-${v}`}
+            >
+              <Icon name={v === 'text' ? 'text' : v === 'questions' ? 'list' : 'sparkle'} size={20} />
+              <span>
+                <b>{t}</b>
+                <span className="muted small">{h}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </fieldset>
+
+      <div className={cx('dropzones', isText && 'is-single')}>
         <FileZone
-          label="دفترچه‌ی سؤالات"
+          label={isText ? 'فایل‌ها (کتاب، جزوه، بانک نکات)' : 'دفترچه‌ی سؤالات'}
           hint="PDF یا عکس (JPG، PNG، HEIC آیفون) — اسکن CamScanner هم قبول است. چند عکس را به ترتیب صفحه انتخاب کنید. حداکثر ۲۰۰ مگابایت."
           required
           files={booklet}
           onChange={setBooklet}
           testId="drop-booklet"
         />
-        <FileZone
-          label="پاسخ تشریحی"
-          hint="فقط اگر پاسخ‌ها در فایل جداگانه‌اند. PDF یا عکس."
-          files={explanations}
-          onChange={setExplanations}
-          testId="drop-explanations"
-        />
+        {!isText && (
+          <FileZone
+            label="پاسخ تشریحی"
+            hint="فقط اگر پاسخ‌ها در فایل جداگانه‌اند. PDF یا عکس."
+            files={explanations}
+            onChange={setExplanations}
+            testId="drop-explanations"
+          />
+        )}
       </div>
 
       <div className="form-grid">
+        {!isText && (
+          <>
         <fieldset className="field field-track">
           <legend className="field-label">
-            آزمون <span className="req">(الزامی)</span>
+            آزمون {needsExam ? <span className="req">(الزامی)</span> : <span className="muted small">(برای دفترچه‌ی آزمون)</span>}
           </legend>
           <div className="segmented segmented-lg" role="radiogroup" aria-label="آزمون">
             {(['bar', 'center', 'other'] as Track[]).map((t) => (
@@ -336,7 +377,7 @@ export default function UploadCard({ onCreated }: { onCreated: () => void }) {
         </fieldset>
         <div className="field field-year">
           <label className="field-label" htmlFor="up-year">
-            سال آزمون (شمسی) <span className="req">(الزامی)</span>
+            سال آزمون (شمسی) {needsExam ? <span className="req">(الزامی)</span> : <span className="muted small">(برای دفترچه‌ی آزمون)</span>}
           </label>
           <div className="year-row">
             <input
@@ -368,8 +409,10 @@ export default function UploadCard({ onCreated }: { onCreated: () => void }) {
             ))}
           </div>
         </div>
+          </>
+        )}
         <label className="field field-wide">
-          <span className="field-label">عنوان پروژه</span>
+          <span className="field-label">عنوان پروژه {isText && <span className="req">(الزامی)</span>}</span>
           <input
             className="input"
             value={shownTitle}
@@ -377,7 +420,7 @@ export default function UploadCard({ onCreated }: { onCreated: () => void }) {
               setTitle(e.target.value);
               setTitleTouched(true);
             }}
-            placeholder="خودکار از روی آزمون و سال"
+            placeholder={isText ? 'مثلاً بانک نکات حقوق مدنی' : 'خودکار از روی آزمون و سال'}
             data-testid="title-input"
           />
           {!titleTouched && autoTitle && <span className="field-hint">عنوان خودکار ساخته شد؛ در صورت نیاز تغییر دهید.</span>}
@@ -389,10 +432,11 @@ export default function UploadCard({ onCreated }: { onCreated: () => void }) {
           تنظیمات پیشرفته
           <span className="muted small">
             {' '}
-            — الگو: {blueprint === 'auto' ? 'خودکار' : blueprintInfo?.title ?? blueprint} · موتور: {ENGINE_LABELS[engine]}
+            — {isText ? '' : `الگو: ${blueprint === 'auto' ? 'خودکار' : blueprintInfo?.title ?? blueprint} · `}موتور: {ENGINE_LABELS[engine]}
           </span>
         </summary>
         <div className="form-grid advanced-grid">
+          {!isText && (
           <label className="field">
             <span className="field-label">الگوی آزمون (تعداد و ترتیب درس‌ها)</span>
             <select className="input" value={blueprint} onChange={(e) => setBlueprintOverride(e.target.value)} data-testid="blueprint-select">
@@ -405,6 +449,7 @@ export default function UploadCard({ onCreated }: { onCreated: () => void }) {
             </select>
             <span className="field-hint">به‌طور خودکار از روی آزمون و سال انتخاب می‌شود.</span>
           </label>
+          )}
           <label className="field">
             <span className="field-label">موتور خواندن متن</span>
             <select className="input" value={engine} onChange={(e) => setEngine(e.target.value as EngineName)}>

@@ -15,6 +15,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 from itertools import pairwise
+from typing import Literal
 
 from .blueprints import detect_subject_heading, get_blueprint, subject_for
 from .models import (
@@ -25,21 +26,24 @@ from .models import (
     Issue,
     Line,
     Option,
+    PageResult,
     ParseResult,
     Question,
     Region,
     Word,
 )
 from .normalize import ZWNJ, comparable, normalize_text, to_ascii_digits, to_persian_digits
-from .validate import stated_key, validate_project, validate_question
+from .validate import inline_key_statement, stated_key, validate_project, validate_question
 
 QUESTION_GAP = 5  # max numbers a question marker may skip (missing questions)
 EXPLANATION_GAP = 10
 LOOKAHEAD_TOKENS = 300
 LETTERS = {"الف": 1, "ب": 2, "ج": 3, "د": 4}
+# Marker letters incl. common OCR damage ("لف)" for "الف)").
+_MARK_LETTERS = {**LETTERS, "لف": 1, "اف": 1}
 
 _DELIMS = r")(\]\[.\-–—ـ:_"
-_CORE = r"\d{1,3}|الف|ب|ج|د"
+_CORE = r"\d{1,3}|الف|لف|اف|ب|ج|د"
 _MARK = re.compile(rf"^([(\[\-–—ـ.)\]]*)({_CORE})([{_DELIMS}]*)$")
 _GLUED = re.compile(rf"^([(\[]?(?:{_CORE})[)\].\-–—ـ:]+)(\S+)$")
 _PURE_DELIM = re.compile(rf"^[{_DELIMS}]+$")
@@ -86,7 +90,9 @@ class _Tok:
     line: Line
     first: bool  # first token of its line
     glued: bool = False  # split off the previous token's word (no space when joined)
-    heading: str | None = None  # a whole subject-heading line collapsed into one token
+    # A whole heading line collapsed into one token: its subject key, or "" for a
+    # structural heading ("فصل نخست: ...") that names no subject.
+    heading: str | None = None
 
 
 @dataclass(frozen=True)
@@ -135,15 +141,15 @@ def _marker_at(toks: list[_Tok], i: int, allow_bare: bool | None = None) -> _Mar
     if allow_bare is None:
         allow_bare = t.first
     nxt = toks[i + 1] if i + 1 < len(toks) and not toks[i + 1].first else None
-    m = _MARK.match(t.text)
+    m = _MARK.match(t.text.replace(ZWNJ, ""))
     if m:
         lead, core, trail = m.groups()
         size = 1
         delims = trail or lead
         if not delims and nxt is not None and _PURE_DELIM.match(nxt.text):
             delims, size = nxt.text, 2  # "۱۲" "-" split into two words
-        kind = "letter" if core in LETTERS else "digit"
-        value = LETTERS.get(core) or int(to_ascii_digits(core))
+        kind = "letter" if core in _MARK_LETTERS else "digit"
+        value = _MARK_LETTERS.get(core) or int(to_ascii_digits(core))
         if value == 0:
             return None
         if not delims:
@@ -153,8 +159,8 @@ def _marker_at(toks: list[_Tok], i: int, allow_bare: bool | None = None) -> _Mar
         return _Marker(value, kind, _style_of(delims[0]), size, t.first)
     # "(" "۱" / "-" "۱۲" split at line start (RTL extraction artifact)
     if t.first and _PURE_DELIM.match(t.text) and nxt is not None and _CORE_ONLY.match(nxt.text):
-        kind = "letter" if nxt.text in LETTERS else "digit"
-        value = LETTERS.get(nxt.text) or int(to_ascii_digits(nxt.text))
+        kind = "letter" if nxt.text in _MARK_LETTERS else "digit"
+        value = _MARK_LETTERS.get(nxt.text) or int(to_ascii_digits(nxt.text))
         if value:
             return _Marker(value, kind, _style_of(t.text[0]), 2, True)
     return None
@@ -175,6 +181,42 @@ _ALWAYS_NOISE = [
 _PAGE_NUMBER = re.compile(r"^(\d{1,4}|[-–—(\[|]\s*\d{1,4}\s*[-–—)\]|]|\d{1,4}\s*(از|/)\s*\d{1,4})$")
 
 
+_SECTION_HEADING = re.compile(r"^(بخش|فصل|مبحث|گفتار|قسمت|باب|درس|مقدمه)(\s+[^\s:]+){0,2}\s*:")
+
+
+def _is_section_heading(text: str) -> bool:
+    """Structural headings like "فصل نخست: تعریف تاجر"."""
+    text = normalize_text(text)
+    return len(text.split()) <= 14 and bool(_SECTION_HEADING.match(text))
+
+
+def _band_noise(line: Line, idx: int, n_lines: int) -> bool:
+    """Running header/footer in the top/bottom page band (often OCR garbage)."""
+    box = _line_bbox(line)
+    if box is None:
+        return False
+    if not ((idx < 4 and box[3] < 0.09) or (idx >= n_lines - 3 and box[1] > 0.95)):
+        return False
+    text = to_ascii_digits(normalize_text(line.text))
+    words = text.split()
+    numbered = any(re.fullmatch(r"\d{1,3}", w) for w in (words[0], words[-1])) if words else False
+    if (
+        not text
+        or detect_subject_heading(text)
+        or (_is_section_heading(text) and not numbered)  # running header = heading + page no.
+        or _is_key_heading(line)
+        or comparable(text).split()[0] in _SECTION_PREFIX  # "پاسخ سؤال ۱"
+    ):
+        return False
+    toks = _line_tokens(line)
+    m = _marker_at(toks, 0) if toks else None
+    if m and m.style:
+        return False
+    flagged = sum(1 for w in line.words if w.flag) >= 0.5 * len(line.words)
+    width = box[2] - box[0]
+    return numbered or flagged or width < 0.12 or (width < 0.35 and bool(re.search(r"\d", text)))
+
+
 def _noise_lines(doc: DocumentResult) -> set[int]:
     """ids of Line objects that are headers/footers/page numbers/watermarks."""
     noise: set[int] = set()
@@ -184,7 +226,11 @@ def _noise_lines(doc: DocumentResult) -> set[int]:
         for idx, line in enumerate(lines):
             text = to_ascii_digits(normalize_text(line.text))
             at_edge = idx < 2 or idx >= len(lines) - 2
-            if any(p.search(text) for p in _ALWAYS_NOISE) or at_edge and _PAGE_NUMBER.match(text):
+            if (
+                any(p.search(text) for p in _ALWAYS_NOISE)
+                or (at_edge and _PAGE_NUMBER.match(text))
+                or _band_noise(line, idx, len(lines))
+            ):
                 noise.add(id(line))
             elif (idx < 3 or idx >= len(lines) - 3) and not detect_subject_heading(text):
                 toks = _line_tokens(line)
@@ -211,7 +257,38 @@ def _noise_lines(doc: DocumentResult) -> set[int]:
 
 def _content_lines(doc: DocumentResult) -> list[Line]:
     noise = _noise_lines(doc)
-    return [ln for page in doc.pages for ln in page.lines if ln.words and id(ln) not in noise]
+    return [
+        ln
+        for page in doc.pages
+        for ln in _fix_row_order([ln for ln in page.lines if ln.words and id(ln) not in noise])
+    ]
+
+
+def _same_row(a: BBox, b: BBox) -> bool:
+    overlap = min(a[3], b[3]) - max(a[1], b[1])
+    height = min(a[3] - a[1], b[3] - b[1])
+    if height <= 0:
+        return abs((a[1] + a[3]) - (b[1] + b[3])) < 0.01
+    return overlap > 0.5 * height
+
+
+def _fix_row_order(lines: list[Line]) -> list[Line]:
+    """OCR sometimes emits the left part of a row before its right part (RTL); swap them."""
+    out = list(lines)
+    i = 0
+    while i < len(out):
+        a = _line_bbox(out[i])
+        moved = False
+        if a is not None:
+            for k in range(i + 1, min(i + 4, len(out))):
+                b = _line_bbox(out[k])
+                if b is not None and _same_row(a, b) and b[0] >= a[2] - 0.02:
+                    out.insert(k, out.pop(i))
+                    moved = True
+                    break
+        if not moved:
+            i += 1
+    return out
 
 
 # -------------------------------------------------------------------- key table
@@ -402,7 +479,8 @@ class _Build:
     marker_toks: dict[str, list[_Tok]] = field(default_factory=dict)
     opt_sig: tuple[str, str] | None = None
     nopts: int = 0
-    current: str = "stem"  # field receiving tokens
+    current: str = "stem"  # field receiving tokens ("stem", "option:N", "explanation")
+    inline_key: str | None = None  # stated right after the options (test books)
 
 
 class _BookletParser:
@@ -447,8 +525,11 @@ class _BookletParser:
         while i < len(toks):
             t = toks[i]
             if t.heading is not None:
-                self.subject = t.heading
+                self.subject = t.heading or self.subject
                 i += 1
+                continue
+            if t.first and self._inline_explanation_starts(i):
+                i = self._start_inline_explanation(i)
                 continue
             m = _marker_at(toks, i)
             action = self._decide(m, i) if m else None
@@ -495,6 +576,7 @@ class _BookletParser:
                 m.value == 1
                 or (bool(self.q_style) and m.style == self.q_style)
                 or (m.style != self.o_style and m.value > 4)
+                or (self.o_sig is not None and self.o_sig[0] == "letter")
             )
         if self._is_restart(m):
             return True
@@ -503,6 +585,8 @@ class _BookletParser:
             return False
         if cur.nopts == 0 and self._reappears_after_options(i + m.size, m):
             return False  # a numbered item inside the stem; the real question comes later
+        if cur.current == "explanation" and not self._options_follow(i + m.size, m):
+            return False  # a numbered list inside an inline explanation
         if not m.first:
             return (
                 cur.nopts >= 4
@@ -518,7 +602,9 @@ class _BookletParser:
 
     def _option_ok(self, m: _Marker, i: int) -> bool:
         cur = self.cur
-        if cur is None or cur.nopts >= 4 or m.value != cur.nopts + 1:
+        if cur is None or cur.current == "explanation":
+            return False
+        if cur.nopts >= 4 or m.value != cur.nopts + 1:
             return False
         if m.style == "" and (self.o_sig is None or self.o_sig[1] != ""):
             return False
@@ -536,6 +622,64 @@ class _BookletParser:
         if m.first:
             return m.style == cur.opt_sig[1] or not _guarded(self.toks, i)
         return m.style == cur.opt_sig[1] and not _guarded(self.toks, i)
+
+    # -- inline explanations (test books: "گزینه‌ی «د» درست است." after the options)
+
+    def _line_end(self, i: int) -> int:
+        j = i + 1
+        while j < len(self.toks) and not self.toks[j].first:
+            j += 1
+        return j
+
+    def _inline_explanation_starts(self, i: int) -> bool:
+        cur = self.cur
+        if cur is None or cur.nopts < 2 or cur.current == "explanation":
+            return False
+        text = " ".join(t.text for t in self.toks[i : self._line_end(i)])
+        key = inline_key_statement(text)
+        if key is None:
+            return False
+        cur.inline_key = key
+        return True
+
+    def _start_inline_explanation(self, i: int) -> int:
+        cur = self.cur
+        assert cur is not None
+        end = self._line_end(i)
+        explanation = list(self.toks[i:end])
+        # OCR line-order glitch: explanation fragments that landed after the last option
+        # (lines not reaching the right margin, after the option's own first line).
+        option = cur.fields[cur.current]
+        if cur.current.startswith("option:") and option:
+            boxes = [b for t in option if (b := _line_bbox(t.line))]
+            margin = max((b[2] for b in boxes), default=1.0)
+            marker_line = id(cur.marker_toks.get(cur.current, option[:1])[0].line)
+            moved: list[_Tok] = []
+            while option and id(option[-1].line) != marker_line and len(moved) < 60:
+                line = option[-1].line
+                box = _line_bbox(line)
+                if box is None or box[2] > margin - 0.1:
+                    break
+                while option and option[-1].line is line:
+                    moved.insert(0, option.pop())
+            explanation += moved
+        cur.current = "explanation"
+        cur.fields["explanation"] = explanation
+        return end
+
+    def _options_follow(self, start: int, m: _Marker) -> bool:
+        """A question marker inside an explanation is real only if options follow it."""
+        if self.o_sig is None:
+            return True
+        for j in range(start, min(len(self.toks), start + LOOKAHEAD_TOKENS)):
+            n = _marker_at(self.toks, j)
+            if n is None:
+                continue
+            if n.value == 1 and n.kind == self.o_sig[0] and n.style:
+                return True
+            if n.first and n.kind == "digit" and n.style == m.style and n.value >= m.value:
+                return False
+        return False
 
     def _is_restart(self, m: _Marker) -> bool:
         """Numbered instructions ("۱- ... ۲- ...") before the real first question."""
@@ -782,6 +926,74 @@ def _join(toks: list[_Tok], paragraphs: bool = False) -> str:
     return normalize_text(" ".join(parts))
 
 
+_PARENS = re.compile(r"\(\s*([^()]{2,60}?)\s*\)")
+_EXAM_WORDS = {
+    comparable(w)
+    for w in (
+        "ارشد",
+        "سراسری",
+        "آزاد",
+        "وکالت",
+        "قضاوت",
+        "قضایی",
+        "کانون",
+        "سردفتری",
+        "دفتریاری",
+        "مرکز",
+        "کارشناسی",
+        "دکتری",
+        "کنکور",
+        "آزمون",
+        "مشاوران",
+        "مشاور",
+        "کارآموزی",
+        "داوری",
+        "دادگستری",
+        "سنجش",
+        "نیمه‌متمرکز",
+        "دانشگاه",
+    )
+}
+
+
+def _find_source_ref(text: str) -> re.Match[str] | None:
+    """A printed source tag like "(ارشد سراسری-۷۸)" / "(قضاوت ۱۴۰۰)"; last one wins."""
+    found = None
+    for m in _PARENS.finditer(text):
+        inner = comparable(m.group(1))
+        words = inner.split()
+        if (
+            words
+            and words[0] not in _GUARD_WORDS
+            and any(w in _EXAM_WORDS for w in words)
+            and re.search(r"(?<!\d)\d{2,4}(?!\d)", inner)
+            and len(words) <= 8
+        ):
+            found = m
+    return found
+
+
+def _extract_source_ref(q: Question) -> None:
+    """Move a source tag from the stem (or, after OCR reordering, an option or the
+    explanation) into `source_ref`."""
+    fields: list[tuple[str, str]] = [("stem", q.stem)]
+    fields += [(f"option:{o.key}", o.text) for o in reversed(q.options)]
+    fields.append(("explanation", q.explanation))
+    for name, text in fields:
+        m = _find_source_ref(text)
+        if m is None:
+            continue
+        q.source_ref = re.sub(r"\s*([-–/])\s*", r"\1", normalize_text(m.group(1)))
+        rest = normalize_text(text[: m.start()] + " " + text[m.end() :])
+        if name == "stem":
+            q.stem = rest
+        elif name == "explanation":
+            q.explanation = rest
+        else:
+            next(o for o in q.options if f"option:{o.key}" == name).text = rest
+        return
+
+
 def _to_question(b: _Build) -> Question:
     options = [
         Option(key=str(k), text=_join(b.fields.get(f"option:{k}", [])))
@@ -793,14 +1005,19 @@ def _to_question(b: _Build) -> Question:
         marker = b.marker_toks.get(name, [])
         flags.extend(_flags(marker + toks, name, "booklet"))
         all_toks.extend(marker + toks)
-    return Question(
+    q = Question(
         number=b.number,
         subject_key=b.subject,
         stem=_join(b.fields["stem"]),
         options=options,
+        explanation=_join(b.fields.get("explanation", []), paragraphs=True),
         flags=flags,
         regions=_regions(all_toks, "booklet"),
     )
+    if b.inline_key:
+        q.correct_key, q.key_source = b.inline_key, "inline"
+    _extract_source_ref(q)
+    return q
 
 
 def _tokenize(lines: list[Line], headings: bool) -> list[_Tok]:
@@ -809,10 +1026,11 @@ def _tokenize(lines: list[Line], headings: bool) -> list[_Tok]:
         line_toks = _line_tokens(line)
         if not line_toks:
             continue
-        subject = detect_subject_heading(line.text) if headings else None
-        if subject and _marker_at(line_toks, 0) is None:
-            toks.append(_Tok("", line.words[0], line, first=True, heading=subject))
-            continue
+        if headings and _marker_at(line_toks, 0) is None:
+            subject = detect_subject_heading(line.text)
+            if subject or _is_section_heading(line.text):
+                toks.append(_Tok("", line.words[0], line, first=True, heading=subject or ""))
+                continue
         toks.extend(line_toks)
     return toks
 
@@ -834,7 +1052,7 @@ def build_questions(
     for q in questions:
         if has_bp:
             q.subject_key = subject_for(blueprint, q.number) or q.subject_key
-        if q.number in key:
+        if q.number in key:  # the official table wins over an inline statement
             q.correct_key, q.key_source = key[q.number], "table"
 
     doc_issues: list[Issue] = []
@@ -915,3 +1133,101 @@ def parse_single_question(lines: list[Line], doc_kind: DocKind) -> Question | No
     if not q.stem and not q.options:
         return None
     return q
+
+
+# ------------------------------------------------------------------ full text
+
+_BULLET = re.compile(r"^[•▪●○◦*\-–—]\s*\S")
+_NOTE_ITEM = re.compile(
+    r"^(نکته|تبصره|ماده|اصل|مثال|توجه|یادآوری|سؤال|سوال|پاسخ)\s*[\d۰-۹]*\s*[:：\-]"
+)
+_BLOCK_END = ("؟", "!", ":", "：")
+_SOFT_END = (".", "»", "؛")
+
+
+def _starts_block(line: Line, text: str) -> bool:
+    toks = _line_tokens(line)
+    m = _marker_at(toks, 0) if toks else None
+    return bool(
+        (m and m.style)
+        or _BULLET.match(text)
+        or _NOTE_ITEM.match(text)
+        or _is_section_heading(text)
+        or detect_subject_heading(text)
+        or _is_key_heading(line)
+        or inline_key_statement(text)
+    )
+
+
+def _plain_text(lines: list[Line]) -> str:
+    """Reflow OCR lines into paragraphs, one per output line."""
+    boxes = {id(ln): _line_bbox(ln) for ln in lines}
+    known = [b for b in boxes.values() if b]
+    block_left = min((b[0] for b in known), default=0.0)
+    gaps = sorted(
+        b[1] - a[3]
+        for p, n in pairwise(lines)
+        if (a := boxes[id(p)]) and (b := boxes[id(n)]) and p.page == n.page and b[1] > a[3]
+    )
+    usual_gap = gaps[len(gaps) // 2] if gaps else 0.0
+    paragraphs: list[list[str]] = []
+    prev: Line | None = None
+    prev_text = ""
+    prev_heading = False
+    for line in lines:
+        text = normalize_text(line.text).replace("**", "").strip()
+        if not text:
+            continue
+        a = boxes[id(prev)] if prev is not None else None
+        b = boxes[id(line)]
+        same_row = (
+            a is not None and b is not None and _same_row(a, b) and b[2] <= a[0] + 0.02
+        )  # left part of the previous line's row (RTL)
+        new = not same_row and (prev is None or prev_heading or _starts_block(line, text))
+        if not new and not same_row and prev is not None:
+            short = a is not None and a[0] > block_left + 0.12  # RTL: ended before the left edge
+            if (
+                prev_text.endswith(_BLOCK_END)
+                or (prev_text.endswith(_SOFT_END) and (short or a is None))
+                or short
+                or a
+                and b
+                and line.page == prev.page
+                and b[1] - a[3] > max(0.01, 1.8 * usual_gap)
+            ):
+                new = True
+        if new:
+            paragraphs.append([text])
+        else:
+            paragraphs[-1].append(text)
+        prev, prev_text = line, text
+        prev_heading = bool(_is_section_heading(text) or detect_subject_heading(text))
+    return "\n".join(normalize_text(" ".join(p)) for p in paragraphs)
+
+
+def _page_lines(doc: DocumentResult) -> dict[int, list[Line]]:
+    by_page: dict[int, list[Line]] = {p.index: [] for p in doc.pages}
+    for line in _content_lines(doc):
+        by_page.setdefault(line.page, []).append(line)
+    return by_page
+
+
+def document_plain_text(doc: DocumentResult) -> list[str]:
+    """Readable text per page (full-text mode), running headers/footers removed."""
+    by_page = _page_lines(doc)
+    return [_plain_text(by_page.get(p.index, [])) for p in doc.pages]
+
+
+def page_plain_text(page: PageResult) -> str:
+    """Readable text of one page; cross-page header detection needs `document_plain_text`."""
+    doc = DocumentResult(kind="booklet", filename="", pages=[page])
+    return _plain_text(_page_lines(doc).get(page.index, []))
+
+
+def detect_mode(result: ParseResult) -> Literal["questions", "text"]:
+    """ "questions" when the parse found real multiple-choice questions, else "text"."""
+    questions = result.questions
+    well_formed = sum(1 for q in questions if sum(1 for o in q.options if o.text.strip()) >= 2)
+    if well_formed >= 3 or (questions and well_formed >= 0.5 * len(questions)):
+        return "questions"
+    return "text"

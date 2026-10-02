@@ -15,6 +15,7 @@ import pymupdf
 from app.config import Settings
 from app.models import BBox, DocumentResult, Line, PageResult, Word
 from app.ocr import consensus
+from app.ocr.flags import refine_low_conf_flags
 from app.ocr.llm import AiEngine, AiEngineError, get_ai_engine
 from app.ocr.tesseract import ocr_tesseract
 from app.pdf_input import RenderedPage, render_document
@@ -177,7 +178,9 @@ def process_document(
                 results.append(pending.pop(0).result())
         results.extend(f.result() for f in pending)
     results.sort(key=lambda p: p.index)
-    return DocumentResult(kind=kind, filename=filename, pages=results)  # type: ignore[arg-type]
+    doc = DocumentResult(kind=kind, filename=filename, pages=results)  # type: ignore[arg-type]
+    refine_low_conf_flags(doc)
+    return doc
 
 
 # --------------------------------------------------------------------------- region re-OCR

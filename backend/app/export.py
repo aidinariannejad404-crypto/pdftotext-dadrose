@@ -33,6 +33,7 @@ def _question_payload(q: Question) -> dict:
         ],
         "correct_key": q.correct_key,
         "explanation_html": _paragraphs(q.explanation),
+        "source_ref": q.source_ref,
     }
 
 

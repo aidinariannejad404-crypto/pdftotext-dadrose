@@ -288,6 +288,17 @@ export default function Editor(props: Props) {
             placeholder="متن سؤال…"
           />
           <FieldIssues issues={issuesFor('stem')} />
+          <label className="source-ref">
+            <span className="field-label">منبع سؤال</span>
+            <input
+              className="input input-sm"
+              value={draft.source_ref}
+              onChange={(e) => onChange({ source_ref: e.target.value })}
+              onBlur={onBlurField}
+              placeholder="مثلاً ارشد سراسری-۷۸ (اختیاری)"
+              data-field="source_ref"
+            />
+          </label>
         </div>
 
         <fieldset className={cx('options', keyIssues.some((i) => i.level === 'error') && 'needs-attention')} data-field="key">

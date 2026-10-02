@@ -50,7 +50,8 @@ export function StatusChip({ status, stage }: { status: string; stage?: string }
 function ProjectRow({ p, onDelete }: { p: ProjectSummary; onDelete: (p: ProjectSummary) => void }) {
   const busy = p.status === 'queued' || p.status === 'processing';
   const pct = percent(p.progress.done, p.progress.total);
-  const approvedPct = percent(p.approved_count, p.question_count);
+  const approvedPct = percent(p.approved_count, p.mode === 'text' ? p.page_count ?? 0 : p.question_count);
+  const done = p.mode === 'text' ? (p.page_count ?? 0) > 0 && p.approved_count === p.page_count : p.approved_count === p.question_count && p.question_count > 0;
   return (
     <li className="project-row" data-testid="project-row">
       <div className="project-main">
@@ -79,7 +80,25 @@ function ProjectRow({ p, onDelete }: { p: ProjectSummary; onDelete: (p: ProjectS
         {p.status === 'failed' && p.error && <div className="small text-danger">{p.error}</div>}
       </div>
       <div className="project-counts">
-        {p.status === 'ready' && (
+        {p.status === 'ready' && p.mode === 'text' && (
+          <>
+            <div className="count">
+              <span className="count-num">{fa(p.page_count ?? 0)}</span>
+              <span className="count-label">صفحه‌ها</span>
+            </div>
+            <div className="count count-success">
+              <span className="count-num">{fa(p.approved_count)}</span>
+              <span className="count-label">تأییدشده</span>
+            </div>
+            <div className="count">
+              <span className="chip chip-neutral">متن کامل</span>
+            </div>
+            <div className="bar bar-sm count-bar" title={`${fa(approvedPct)}٪ تأیید شده`}>
+              <div className="bar-fill bar-success" style={{ width: `${approvedPct}%` }} />
+            </div>
+          </>
+        )}
+        {p.status === 'ready' && p.mode !== 'text' && (
           <>
             <div className="count">
               <span className="count-num">{fa(p.question_count)}</span>
@@ -104,7 +123,7 @@ function ProjectRow({ p, onDelete }: { p: ProjectSummary; onDelete: (p: ProjectS
           className={cx('btn btn-sm', p.status === 'ready' && 'btn-primary')}
           onClick={() => navigate(`#/p/${encodeURIComponent(p.id)}`)}
         >
-          {p.status === 'ready' ? (p.approved_count === p.question_count && p.question_count > 0 ? 'مشاهده و دانلود' : 'بازبینی') : 'مشاهده'}
+          {p.status === 'ready' ? (done ? 'مشاهده و دانلود' : 'بازبینی') : 'مشاهده'}
         </button>
         <button className="btn btn-sm btn-ghost btn-icon" onClick={() => onDelete(p)} aria-label={`حذف ${p.title}`} title="حذف">
           <Icon name="trash" />

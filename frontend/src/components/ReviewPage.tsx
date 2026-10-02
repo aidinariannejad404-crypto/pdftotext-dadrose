@@ -12,6 +12,8 @@ import Editor, { NextProblemButton, type NextProblem } from './Editor';
 import HelpDialog from './HelpDialog';
 import { BrandMark, Icon } from './Icons';
 import Menu from './Menu';
+import ModeDialog from './ModeDialog';
+import TextReview from './TextReview';
 import Modal from './Modal';
 import Navigator, { type NavFilter } from './Navigator';
 import PageViewer, { type FocusTarget } from './PageViewer';
@@ -26,6 +28,7 @@ type Dialog =
   | { kind: 'add' }
   | { kind: 'delete' }
   | { kind: 'help' }
+  | { kind: 'mode' }
   | null;
 
 function readQueryNumber(): number | null {
@@ -474,6 +477,7 @@ export default function ReviewPage({ id }: { id: string }) {
   }
 
   if (project.status !== 'ready') return <ProcessingView project={project} />;
+  if (project.mode === 'text') return <TextReview project={project} setProject={setProject} />;
 
   const total = questions.length;
   const approvedCount = counts.approved;
@@ -586,6 +590,13 @@ export default function ReviewPage({ id }: { id: string }) {
                 testId: 'menu-push',
               },
               'sep',
+              {
+                label: 'نمایش به‌صورت متن کامل',
+                hint: 'برای بانک نکات، جزوه یا کتاب',
+                icon: 'text',
+                onSelect: () => setDialog({ kind: 'mode' }),
+                testId: 'menu-mode',
+              },
               {
                 label: busy === 'reparse' ? 'در حال استخراج…' : 'استخراج دوباره‌ی سؤال‌ها',
                 hint: 'ویرایش‌ها و تأییدها پاک می‌شود',
@@ -700,6 +711,17 @@ export default function ReviewPage({ id }: { id: string }) {
       </div>
 
       {dialog?.kind === 'help' && <HelpDialog onClose={() => setDialog(null)} />}
+      {dialog?.kind === 'mode' && (
+        <ModeDialog
+          projectId={id}
+          target="text"
+          onClose={() => setDialog(null)}
+          onDone={(p) => {
+            setProject(p);
+            setCurrent(null);
+          }}
+        />
+      )}
       {dialog?.kind === 'reocr' && question && (
         <ReocrDialog
           number={question.number}

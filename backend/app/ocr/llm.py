@@ -199,8 +199,9 @@ class GeminiEngine:
 
 
 def claude_configured(settings: Settings) -> bool:
-    # A relay (base URL) may inject credentials itself.
-    return bool(settings.anthropic_api_key or settings.anthropic_base_url)
+    # A base URL alone is not enough: ANTHROPIC_BASE_URL is often set by unrelated tooling.
+    # For a relay that injects credentials itself, set any placeholder ANTHROPIC_API_KEY.
+    return bool(settings.anthropic_api_key)
 
 
 def gemini_configured(settings: Settings) -> bool:

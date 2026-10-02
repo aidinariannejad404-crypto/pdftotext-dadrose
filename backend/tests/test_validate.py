@@ -1,5 +1,5 @@
 from app.models import Flag, Option, Question
-from app.validate import stated_key, validate_project, validate_question
+from app.validate import inline_key_statement, stated_key, validate_project, validate_question
 
 
 def make_q(number: int = 1, **kw) -> Question:
@@ -109,7 +109,23 @@ def test_project_level_issues():
 
 def test_key_table_missing():
     qs = [make_q(n, key_source="explanation") for n in (1, 2)]
+    assert "key_table_missing" not in codes(validate_project(qs, True, None))  # all keyed
+    qs[1].correct_key = None
     assert "key_table_missing" in codes(validate_project(qs, True, None))
+
+
+def test_key_mismatch_inline_vs_table():
+    q = make_q(correct_key="1", key_source="table", explanation="گزینه‌ی «د» درست است. زیرا ...")
+    assert "key_mismatch" in codes(validate_question(q, False))
+    inline = make_q(correct_key="4", key_source="inline", explanation="گزینه‌ی «د» درست است.")
+    assert "key_mismatch" not in codes(validate_question(inline, False))
+    # a later "... نادرست است" mention does not count as the stated key
+    sub = make_q(
+        correct_key="4",
+        key_source="table",
+        explanation="گزینه‌ی «الف» به این دلیل نادرست است که ... گزینه «د» درست است.",
+    )
+    assert "key_mismatch" not in codes(validate_question(sub, False))
 
 
 def test_stated_key_variants():
@@ -119,3 +135,13 @@ def test_stated_key_variants():
     assert stated_key("پاسخ صحیح گزینه چهارم است") == "4"
     assert stated_key("گزینه‌ی ۱ درست است") == "1"
     assert stated_key("طبق ماده ۱۲ قانون مدنی") is None
+
+
+def test_inline_key_statement():
+    assert inline_key_statement("گزینه‌ی «د» درست است. تعریف تاجر") == "4"
+    assert inline_key_statement("گزینه «ب» صحیح است") == "2"
+    assert inline_key_statement("پاسخ: گزینه ۴") == "4"
+    assert inline_key_statement("جواب: ج") == "3"
+    assert inline_key_statement("گزینه‌ی «الف» به این دلیل نادرست است") is None
+    assert inline_key_statement("گزینه «ب» درست نیست") is None
+    assert inline_key_statement("طبق ماده ۲ گزینه ۳ درست است") is None

@@ -51,6 +51,7 @@ export const ENGINE_LABELS: Record<string, string> = {
 export const KEY_SOURCE_LABELS: Record<string, string> = {
   table: 'از جدول کلید',
   explanation: 'از پاسخ تشریحی',
+  inline: 'از پاسخ زیر سؤال',
   manual: 'دستی',
 };
 

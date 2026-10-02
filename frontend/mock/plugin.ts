@@ -5,11 +5,29 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import type { Plugin } from 'vite';
 import type { DocKind, Project, ProjectSummary, Question, QuestionUpdate } from '../src/types';
-import { META, makeReadyProject, pageResult, pageSvg, setFontData, validateQuestion } from './data';
+import {
+  META, makeReadyProject, makeTextProject, notesPageText, pageResult, pageSvg, setFontData, validateQuestion, type PageSet,
+} from './data';
 
 interface MockProject extends Project {
   _startedAt?: number;
   _duration?: number; // ms until processing finishes
+  _set?: PageSet; // which fake page layout the images/OCR come from
+  _texts?: Record<string, string>; // text mode: edited page text, keyed "doc:page"
+}
+
+const pageKey = (doc: string, page: number) => `${doc}:${page}`;
+
+function origText(p: MockProject, doc: DocKind, page: number): string {
+  if (p._set === 'notes') return notesPageText(page);
+  const r = pageResult(doc, page, p._set);
+  return r ? r.lines.map((l) => l.words.map((w) => w.text).join(' ')).join('\n') : '';
+}
+
+function pageText(p: MockProject, doc: DocKind, page: number) {
+  const k = pageKey(doc, page);
+  const edited = p._texts?.[k];
+  return { text: edited ?? origText(p, doc, page), edited: edited !== undefined, approved: !!p.page_status?.[k] };
 }
 
 let projects: MockProject[] = [];
@@ -24,6 +42,7 @@ function seed() {
       _startedAt: now - 10 * 60_000, _duration: 20 * 60_000, // stays in the OCR stage
     },
     makeReadyProject('demo', 'آزمون کانون وکلا ۱۴۰۳', new Date(now - 3600_000).toISOString()),
+    { ...makeTextProject('notes', 'بانک نکات حقوق مدنی', new Date(now - 7200_000).toISOString()), _set: 'notes', _texts: {} },
     {
       ...makeReadyProject('p-failed', 'آزمون کانون ۱۴۰۱ — اسکن ناقص', new Date(now - 86400_000).toISOString()),
       year: 1401, status: 'failed', questions: [], issues: [],
@@ -52,9 +71,16 @@ function advance(p: MockProject) {
     p.status = 'processing';
     p.progress = { stage: 'parsing', done: total, total };
   } else {
-    const ready = makeReadyProject(p.id, p.title, p.created_at);
+    const ready = p.doc_type === 'text' ? makeTextProject(p.id, p.title, p.created_at) : makeReadyProject(p.id, p.title, p.created_at);
+    if (p.doc_type === 'text') {
+      p._set = 'notes';
+      p._texts = {};
+      p.page_status = {};
+      ready.page_status = {};
+    }
     Object.assign(p, {
-      ...ready, track: p.track, year: p.year, blueprint: p.blueprint, engine: p.engine, documents: p.documents,
+      ...ready, track: p.track, year: p.year, blueprint: p.blueprint, engine: p.engine,
+      documents: p.doc_type === 'text' ? ready.documents : p.documents,
     });
   }
 }
@@ -63,16 +89,24 @@ function summary(p: MockProject): ProjectSummary {
   return {
     id: p.id, title: p.title, track: p.track, year: p.year, created_at: p.created_at, status: p.status,
     progress: p.progress, error: p.error,
+    mode: p.mode ?? 'questions',
+    page_count: p.documents.reduce((n, d) => n + d.page_count, 0),
     question_count: p.questions.length,
-    approved_count: p.questions.filter((q) => q.status === 'approved').length,
+    // text mode: approved pages
+    approved_count:
+      p.mode === 'text'
+        ? Object.values(p.page_status ?? {}).filter(Boolean).length
+        : p.questions.filter((q) => q.status === 'approved').length,
     error_count: p.questions.filter((q) => q.issues.some((i) => i.level === 'error')).length,
   };
 }
 
 function strip(p: MockProject): Project {
-  const { _startedAt, _duration, ...rest } = p;
+  const { _startedAt, _duration, _set, _texts, ...rest } = p;
   void _startedAt;
   void _duration;
+  void _set;
+  void _texts;
   return rest;
 }
 
@@ -141,6 +175,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
     const p: MockProject = {
       ...base, track, year,
       blueprint: multipartField(body, 'blueprint') || 'auto',
+      doc_type: (multipartField(body, 'doc_type') || 'auto') as Project['doc_type'],
       engine: (multipartField(body, 'engine') || 'auto') as Project['engine'],
       status: 'queued', progress: { stage: 'queued', done: 0, total: 0 }, questions: [], issues: [],
       documents: /name="explanations"; filename="[^"]+"/.test(body) ? base.documents : base.documents.slice(0, 1),
@@ -164,7 +199,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
 
   const img = /^\/pages\/(booklet|explanations)\/(\d+)\.jpg$/.exec(rest);
   if (img && method === 'GET') {
-    const svg = pageSvg(img[1] as DocKind, Number(img[2]), url.searchParams.get('variant') === 'orig');
+    const svg = pageSvg(img[1] as DocKind, Number(img[2]), url.searchParams.get('variant') === 'orig', p._set);
     if (!svg) return notFound(res, 'صفحه پیدا نشد.'), true;
     res.statusCode = 200;
     res.setHeader('Content-Type', 'image/svg+xml');
@@ -174,8 +209,71 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
   }
   const pg = /^\/pages\/(booklet|explanations)\/(\d+)$/.exec(rest);
   if (pg && method === 'GET') {
-    const r = pageResult(pg[1] as DocKind, Number(pg[2]));
+    const r = pageResult(pg[1] as DocKind, Number(pg[2]), p._set);
+    if (r) {
+      const t = pageText(p, pg[1] as DocKind, Number(pg[2]));
+      r.edited_text = t.edited ? t.text : null;
+      r.approved = t.approved;
+    }
     return (r ? send(res, 200, r) : notFound(res, 'صفحه پیدا نشد.')), true;
+  }
+
+  const pt = /^\/pages\/(booklet|explanations)\/(\d+)\/text$/.exec(rest);
+  if (pt) {
+    const doc = pt[1] as DocKind;
+    const page = Number(pt[2]);
+    const count = p.documents.find((d) => d.kind === doc)?.page_count ?? 0;
+    if (page >= count) return notFound(res, 'صفحه پیدا نشد.'), true;
+    if (method === 'PUT') {
+      const upd = await json<{ text?: string | null; approved?: boolean }>(req);
+      const k = pageKey(doc, page);
+      p._texts = p._texts ?? {};
+      p.page_status = p.page_status ?? {};
+      if (upd.text === null) delete p._texts[k];
+      else if (typeof upd.text === 'string') p._texts[k] = upd.text;
+      if (typeof upd.approved === 'boolean') p.page_status[k] = upd.approved;
+    }
+    return send(res, 200, pageText(p, doc, page)), true;
+  }
+
+  if ((rest === '/export-text.docx' || rest === '/export.txt') && method === 'GET') {
+    const only = url.searchParams.get('only_approved') === '1';
+    const parts: string[] = [];
+    for (const d of p.documents) {
+      for (let i = 0; i < d.page_count; i++) {
+        const t = pageText(p, d.kind, i);
+        if (!only || t.approved) parts.push(t.text);
+      }
+    }
+    const docx = rest.endsWith('.docx');
+    res.statusCode = 200;
+    res.setHeader(
+      'Content-Type',
+      docx ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'text/plain; charset=utf-8',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="dadrose-${p.id}-text.${docx ? 'docx' : 'txt'}"`);
+    res.end(docx ? Buffer.from('PK\u0003\u0004 mock text docx') : parts.join('\n\n— — —\n\n'));
+    return true;
+  }
+
+  if (rest === '/mode' && method === 'POST') {
+    const { mode } = await json<{ mode: 'questions' | 'text' }>(req);
+    if (mode !== 'questions' && mode !== 'text') return send(res, 422, { detail: 'حالت نامعتبر است.' }), true;
+    await delay(400);
+    p.mode = mode;
+    p.page_status = p.page_status ?? {};
+    p._texts = p._texts ?? {};
+    if (mode === 'questions') {
+      if (p._set === 'notes') {
+        p.questions = [];
+        p.issues = [{ level: 'error', code: 'no_questions', message: 'در این فایل سؤال تستی پیدا نشد.', field: null }];
+      } else {
+        const fresh = makeReadyProject(p.id, p.title, p.created_at);
+        p.questions = fresh.questions;
+        p.issues = fresh.issues;
+      }
+    }
+    return send(res, 200, strip(p)), true;
   }
 
   if (rest === '/questions' && method === 'POST') {
@@ -211,6 +309,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
       if (upd.stem != null) q.stem = upd.stem;
       if (upd.options != null) q.options = upd.options;
       if (upd.explanation != null) q.explanation = upd.explanation;
+      if (upd.source_ref != null) q.source_ref = upd.source_ref;
       if (upd.subject_key !== undefined && upd.subject_key !== null) q.subject_key = upd.subject_key;
       if (upd.correct_key != null && upd.correct_key !== q.correct_key) {
         q.correct_key = upd.correct_key;

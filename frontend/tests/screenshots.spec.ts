@@ -102,3 +102,34 @@ test('review extras (desktop): menu, help, completion', async ({ page }) => {
   await page.waitForTimeout(400);
   await page.screenshot({ path: `${OUT}/review-desktop-done.png` });
 });
+
+for (const [name, viewport] of [
+  ['desktop', { width: 1440, height: 900 }],
+  ['mobile', { width: 390, height: 844 }],
+] as const) {
+  test(`text-mode review (${name})`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await reset(page);
+    await page.goto('/#/p/notes?pg=booklet:1');
+    await page.locator('textarea[data-field="text"]').waitFor();
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForTimeout(700);
+    await page.screenshot({ path: `${OUT}/text-review-${name}.png` });
+    if (name === 'mobile') {
+      await page.getByRole('tab', { name: 'تصویر' }).click();
+      await page.waitForTimeout(600);
+      await page.screenshot({ path: `${OUT}/text-review-mobile-image.png` });
+    }
+  });
+}
+
+test('upload form, full-text type (desktop)', async ({ page }) => {
+  await reset(page);
+  await page.goto('/#/');
+  await page.getByTestId('doc-type-text').click();
+  await page.locator('#drop-booklet-input').setInputFiles({
+    name: 'bank-nokat-madani.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF /Type /Page /Type /Page'),
+  });
+  await page.evaluate(() => document.fonts.ready);
+  await page.locator('.upload-card').screenshot({ path: `${OUT}/upload-text-desktop.png` });
+});

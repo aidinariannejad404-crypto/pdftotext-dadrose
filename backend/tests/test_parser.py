@@ -3,7 +3,13 @@ from __future__ import annotations
 import re
 
 from app.models import DocumentResult, Line, PageResult, Word
-from app.parser import build_questions, parse_single_question
+from app.parser import (
+    build_questions,
+    detect_mode,
+    document_plain_text,
+    page_plain_text,
+    parse_single_question,
+)
 
 PAGE_BREAK = "---page---"
 _FLAG = re.compile(r"^(.*)\{(\?|!([^}]*))\}$")
@@ -565,3 +571,159 @@ def test_lost_options_and_option_style_variant():
     assert qs[7].options == [] and "option_count" in codes(qs[7].issues)
     assert opts(qs[8]) == ["یک", "دو", "سه", "چهار"]
     assert opts(qs[9]) == ["الف", "ب", "ج", "د"]
+
+
+# ------------------------------------------------------------ test-book layout
+# Commercial test books: running headers, source tags, letter options (often two per
+# line, OCR-damaged markers) and an inline explanation right after each question.
+
+TEST_BOOK = f"""
+۱۴ نشر نمونه / مجموعه پرسش‌های چهارگزینه‌ای حقوق مدنی
+بخش نخست: کلیات قراردادها
+فصل نخست: شرایط اساسی صحت معامله
+۱- کدام یک از موارد زیر از شرایط اساسی صحت معامله نیست؟ (ارشد سراسری-۸۸)
+الف) قصد و رضا ب) اهلیت
+ج( موضوع معین د) قبض
+گزینه‌ی «د» درست است. طبق ماده‌ی ۱۹۰ قانون مدنی شرایط اساسی صحت معامله
+چهار مورد است و قبض در آن ذکر نشده است.
+گزینه‌ی «الف» به این دلیل نادرست است که قصد و رضا شرط صحت است.
+۲- معامله‌ی شخص سفیه در امور مالی:
+(وکالت -۸۷)
+لف) باطل است
+ب ) غیرنافذ است
+ج‌( صحیح{{?}} است
+د)قابل فسخ است
+گزینه ۲ درست است. مطابق ماده‌ی ۲۱۲ قانون مدنی معامله با سفیه
+{PAGE_BREAK}
+بخش نخست: کلیات قراردادها ۱۵
+بدون اذن ولی یا قیم نافذ نیست. نکات زیر قابل توجه است:
+۱- اذن لاحق ولی معامله را تنفیذ می‌کند.
+۲- رد ولی معامله را باطل{{!باطلی}} می‌کند.
+۳- ثالث با حسن نیت در این مورد حمایت نمی‌شود.
+۳- در کدام مورد عقد باطل است؟ (قضاوت ۱۴۰۰)
+الف) اکراه ب) اشتباه در شخص طرف در عقودی که شخصیت علت عمده نیست
+ج) اشتباه در خود موضوع معامله د) غبن فاحش
+پاسخ: گزینه ۳
+اشتباه در خود موضوع معامله موجب بطلان است.
+"""
+
+
+def test_test_book_layout():
+    result = parse(TEST_BOOK)
+    qs = by_number(result)
+    assert sorted(qs) == [1, 2, 3]
+
+    q1 = qs[1]
+    assert q1.stem == "کدام یک از موارد زیر از شرایط اساسی صحت معامله نیست؟"
+    assert q1.source_ref == "ارشد سراسری-۸۸"
+    assert opts(q1) == ["قصد و رضا", "اهلیت", "موضوع معین", "قبض"]
+    assert q1.correct_key == "4" and q1.key_source == "inline"
+    assert q1.explanation.startswith("گزینه‌ی «د» درست است. طبق ماده‌ی ۱۹۰")
+    assert "به این دلیل نادرست است" in q1.explanation  # sub-mention kept, key unchanged
+
+    q2 = qs[2]
+    assert q2.stem == "معامله‌ی شخص سفیه در امور مالی:"
+    assert q2.source_ref == "وکالت-۸۷"
+    assert opts(q2) == ["باطل است", "غیرنافذ است", "صحیح است", "قابل فسخ است"]
+    assert q2.correct_key == "2"
+    # the explanation continues across the page break; the running header is dropped
+    assert "معامله با سفیه بدون اذن ولی یا قیم نافذ نیست." in q2.explanation
+    assert "کلیات قراردادها" not in q2.explanation
+    assert "۳- ثالث با حسن نیت" in q2.explanation  # numbered list, not question 3
+    fields = {f.field for f in q2.flags}
+    assert fields == {"option:3", "explanation"}
+    assert all(f.doc == "booklet" for f in q2.flags)
+    assert {r.page for r in q2.regions} == {0, 1}
+
+    q3 = qs[3]
+    assert q3.source_ref == "قضاوت ۱۴۰۰"
+    assert opts(q3)[1] == "اشتباه در شخص طرف در عقودی که شخصیت علت عمده نیست"
+    assert q3.correct_key == "3" and q3.explanation.startswith("پاسخ: گزینه ۳")
+
+    assert all(i.level != "error" for q in qs.values() for i in q.issues)
+    assert "key_table_missing" not in codes(result.issues)
+    assert detect_mode(result) == "questions"
+
+
+def _glitch_doc(same_row: bool) -> DocumentResult:
+    text = """
+۴- انتقال دین بدون رضایت طلبکار:
+الف) صحیح است ب) باطل است
+ج) غیرنافذ است د) قابل فسخ است
+مقرر شده است و نیازی به تشریفات خاص نیست.
+(کانون ۹۸)
+گزینه‌ی «ج» درست است. حکم این مسئله در ماده‌ی ۲۹۲ قانون مدنی
+۵- سؤال بعدی؟
+الف) یک ب) دو ج) سه د) چهار
+"""
+    doc = make_doc(text)
+    lines = doc.pages[0].lines
+    statement = lines[5]
+    y0, y1 = statement.words[0].bbox[1], statement.words[0].bbox[3]
+    statement.bbox = (0.5, y0, 0.95, y1)
+    glitch_y = (y0, y1) if same_row else (lines[3].words[0].bbox[1], lines[3].words[0].bbox[3])
+    lines[3].bbox = (0.05, glitch_y[0], 0.48, glitch_y[1])
+    lines[4].bbox = (0.05, 0.3, 0.2, 0.32)  # source tag, OCR'd far from its stem
+    return doc
+
+
+def test_line_order_glitch_goes_to_explanation():
+    for same_row in (True, False):
+        q = by_number(build_questions(_glitch_doc(same_row), None, "auto"))[4]
+        assert opts(q)[3] == "قابل فسخ است"
+        assert q.source_ref == "کانون ۹۸"
+        assert q.correct_key == "3"
+        assert q.explanation == (
+            "گزینه‌ی «ج» درست است. حکم این مسئله در ماده‌ی ۲۹۲ قانون مدنی "
+            "مقرر شده است و نیازی به تشریفات خاص نیست."
+        )
+
+
+def test_table_key_wins_over_inline_and_mismatch_reported():
+    text = TEST_BOOK + "\nکلید سؤالات\n۱-۴ ۲-۱ ۳-۳\n"
+    qs = by_number(parse(text))
+    assert qs[1].key_source == "table" and "key_mismatch" not in codes(qs[1].issues)
+    assert qs[2].correct_key == "1" and "key_mismatch" in codes(qs[2].issues)
+
+
+# ---------------------------------------------------------- notes bank / full text
+
+NOTES_BANK = """
+بانک نکات حقوق مدنی
+فصل اول: قواعد عمومی قراردادها
+نکته ۱: عقد بیع از عقود تملیکی و معوض است و با ایجاب و قبول طرفین
+واقع می‌شود.
+نکته ۲: در بیع مال غیر، معامله غیرنافذ است و با اجازه مالک تنفیذ می‌شود.
+• شرط ضمن عقد تابع عقد اصلی است و با انحلال عقد منحل می‌شود.
+• اقاله در همه عقود لازم به جز نکاح جاری است.
+۱- عقد جایز با فوت یا حجر هر یک از طرفین منحل می‌شود.
+۲- وکالت از عقود جایز است مگر آنکه ضمن عقد لازم دیگری به نحو صریح شرط
+شده باشد.
+"""
+
+
+def test_notes_bank_is_text_mode_and_keeps_structure():
+    result = parse(NOTES_BANK)
+    assert detect_mode(result) == "text"
+    page = make_doc(NOTES_BANK).pages[0]
+    lines = page_plain_text(page).split("\n")
+    assert "فصل اول: قواعد عمومی قراردادها" in lines
+    assert "نکته ۱: عقد بیع از عقود تملیکی و معوض است و با ایجاب و قبول طرفین واقع می‌شود." in lines
+    assert "• اقاله در همه عقود لازم به جز نکاح جاری است." in lines
+    assert (
+        "۲- وکالت از عقود جایز است مگر آنکه ضمن عقد لازم دیگری به نحو صریح شرط شده باشد." in lines
+    )
+    assert len(lines) == 8
+
+
+def test_document_plain_text_drops_running_headers():
+    pages = document_plain_text(make_doc(TEST_BOOK))
+    assert len(pages) == 2
+    assert "نشر نمونه" not in pages[0]
+    assert pages[0].split("\n")[0] == "بخش نخست: کلیات قراردادها"
+    assert pages[1].startswith("بدون اذن ولی یا قیم نافذ نیست.")
+    assert "\nالف) اکراه ب) اشتباه" in pages[1]
+
+
+def test_detect_mode_for_official_booklet():
+    assert detect_mode(parse(FOUR_Q)) == "questions"

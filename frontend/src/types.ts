@@ -4,6 +4,8 @@ export type DocKind = 'booklet' | 'explanations';
 export type EngineName = 'auto' | 'offline' | 'claude' | 'gemini';
 export type WordFlag = 'low_conf' | 'disagree';
 export type Track = 'bar' | 'center' | 'other';
+export type DocType = 'auto' | 'questions' | 'text';
+export type ReviewMode = 'questions' | 'text';
 
 export interface Word {
   text: string;
@@ -28,6 +30,20 @@ export interface PageResult {
   preprocess: string[];
   lines: Line[];
   warnings: string[];
+  edited_text?: string | null;
+  approved?: boolean;
+}
+
+/** GET/PUT /pages/{doc}/{page}/text */
+export interface PageText {
+  text: string;
+  edited: boolean;
+  approved: boolean;
+}
+
+export interface PageTextUpdate {
+  text?: string | null; // null = discard edits (back to OCR text)
+  approved?: boolean;
 }
 
 export interface Region {
@@ -64,8 +80,9 @@ export interface Question {
   stem: string;
   options: Option[];
   correct_key: string | null;
-  key_source: 'table' | 'explanation' | 'manual' | null;
+  key_source: 'table' | 'explanation' | 'inline' | 'manual' | null;
   explanation: string;
+  source_ref?: string;
   regions: Region[];
   flags: Flag[];
   issues: Issue[];
@@ -93,6 +110,8 @@ export interface Project {
   track: Track;
   year: number | null;
   blueprint: string;
+  doc_type?: DocType;
+  mode?: ReviewMode;
   engine: EngineName;
   created_at: string;
   status: ProjectStatus;
@@ -101,6 +120,7 @@ export interface Project {
   documents: DocInfo[];
   questions: Question[];
   issues: Issue[];
+  page_status?: Record<string, boolean>; // text mode: "<doc>:<page>" → approved
 }
 
 export interface ProjectSummary {
@@ -112,6 +132,8 @@ export interface ProjectSummary {
   status: string;
   progress: Progress;
   error: string | null;
+  mode?: ReviewMode;
+  page_count?: number;
   question_count: number;
   approved_count: number;
   error_count: number;
@@ -123,6 +145,7 @@ export interface QuestionUpdate {
   options?: Option[] | null;
   correct_key?: string | null;
   explanation?: string | null;
+  source_ref?: string | null;
   status?: 'pending' | 'approved' | null;
   flags?: Flag[] | null; // full remaining list after resolving suspicious words
 }
