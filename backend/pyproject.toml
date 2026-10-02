@@ -1,0 +1,24 @@
+[project]
+name = "pdftotext-dadrose"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=1.11.0",
+    "fastapi>=0.142.2",
+    "httpx>=0.28.1",
+    "numpy>=2.4.6",
+    "opencv-python-headless>=5.0.0.93",
+    "pydantic-settings>=2.15.0",
+    "pymupdf>=1.28.2",
+    "pytesseract>=0.3.13",
+    "python-multipart>=0.0.32",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "pillow>=12.3.0",
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+]
