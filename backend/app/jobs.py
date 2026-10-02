@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -98,7 +99,7 @@ class JobRunner:
                     info.kind,
                     info.filename,
                     project.engine,
-                    self.settings,
+                    self._settings_for_run(),
                     out_dir,
                     on_progress,
                 )
@@ -126,6 +127,15 @@ class JobRunner:
                 project.progress.stage = "failed"
                 project.error = f"پردازش ناموفق بود: {exc}"
                 self.store.save(project)
+
+    def _settings_for_run(self) -> Settings:
+        """Share the CPU cores between the documents being processed right now."""
+        if self.settings.page_workers > 0:
+            return self.settings
+        with self._queue_lock:
+            running = max(1, len(self._running))
+        cores = max(1, (os.cpu_count() or 2) // running)
+        return self.settings.model_copy(update={"page_workers": cores})
 
     def _set_progress(self, project_id: str, stage: str, done: int, total: int, **extra) -> None:
         with self.store.lock(project_id):
