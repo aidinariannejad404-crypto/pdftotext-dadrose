@@ -192,11 +192,19 @@ def _noise_lines(doc: DocumentResult) -> set[int]:
                     key = re.sub(r"\d+", "", comparable(text)).strip()
                     if key:
                         edge_texts.setdefault(key, set()).add(page.index)
-    repeated = {k for k, pages in edge_texts.items() if len(pages) >= max(3, 0.3 * len(doc.pages))}
+    n_pages = len(doc.pages)
+    repeated = {
+        k
+        for k, pages in edge_texts.items()
+        if len(pages) >= max(3, 0.3 * n_pages)
+        and (len(k.split()) >= 2 or len(pages) >= 0.6 * n_pages)
+    }
     if repeated:
         for page in doc.pages:
-            for line in page.lines:
-                if re.sub(r"\d+", "", comparable(line.text)).strip() in repeated:
+            lines = [ln for ln in page.lines if ln.words]
+            for idx, line in enumerate(lines):
+                at_edge = idx < 3 or idx >= len(lines) - 3
+                if at_edge and re.sub(r"\d+", "", comparable(line.text)).strip() in repeated:
                     noise.add(id(line))
     return noise
 
@@ -241,6 +249,22 @@ def _atoms(text: str) -> tuple[list[tuple[int, bool]], int]:
         elif comparable(tok) not in _KEY_FILLER:
             other += 1
     return atoms, other
+
+
+_ROW_LABELS = {
+    **{comparable(w): "q" for w in ("سوال", "سؤال", "سوالات", "شماره", "ردیف")},
+    **{comparable(w): "a" for w in ("پاسخ", "گزینه", "جواب", "کلید")},
+}
+
+
+def _row_label(text: str) -> str | None:
+    """ "q"/"a" for grid rows labelled like "| سؤال | ۱ | ۲ |" / "| پاسخ | ۳ | ۱ |"."""
+    words = [
+        w
+        for w in re.findall(r"[^\W\d_]+", normalize_text(text).replace(ZWNJ, ""))
+        if w not in LETTERS
+    ]
+    return _ROW_LABELS.get(comparable(words[0])) if len(words) == 1 else None
 
 
 def _key_like(line: Line) -> bool:
@@ -305,6 +329,12 @@ def _parse_key(lines: list[Line]) -> tuple[dict[int, str], bool]:
             continue
         values = [v for v, _ in atoms]
         all_answers = all(v <= 4 for v in values)
+        label = _row_label(line.text)
+        if label == "q" and not any(letter for _, letter in atoms):
+            if header is not None:
+                partial = True
+            header = values
+            continue
         if header is not None and all_answers and len(atoms) == len(header):
             for q, a in zip(header, values, strict=True):
                 put(q, a)
@@ -372,7 +402,7 @@ class _Build:
     marker_toks: dict[str, list[_Tok]] = field(default_factory=dict)
     opt_sig: tuple[str, str] | None = None
     nopts: int = 0
-    field: str = "stem"
+    current: str = "stem"  # field receiving tokens
 
 
 class _BookletParser:
@@ -431,7 +461,7 @@ class _BookletParser:
                 i += m.size
                 continue
             if self.cur is not None:
-                self.cur.fields[self.cur.field].append(t)
+                self.cur.fields[self.cur.current].append(t)
             i += 1
         return self.questions
 
@@ -466,11 +496,13 @@ class _BookletParser:
                 or (bool(self.q_style) and m.style == self.q_style)
                 or (m.style != self.o_style and m.value > 4)
             )
-        if m.value == 1 and m.first and all(q.nopts == 0 for q in self.questions):
-            return True  # numbered instructions before the real first question: restart
+        if self._is_restart(m):
+            return True
         expected = cur.number + 1
         if not expected <= m.value <= expected + QUESTION_GAP:
             return False
+        if cur.nopts == 0 and self._reappears_after_options(i + m.size, m):
+            return False  # a numbered item inside the stem; the real question comes later
         if not m.first:
             return (
                 cur.nopts >= 4
@@ -494,10 +526,7 @@ class _BookletParser:
             if not m.first and _guarded(self.toks, i):
                 return False
             if self.o_sig and m.sig != self.o_sig:
-                # e.g. stem items "الف) ... ب)" followed by the real "۱) ... ۲)" options
-                if self._sequence_ahead(i + m.size, self.o_sig, 1):
-                    return False
-                return self._sequence_ahead(i + m.size, m.sig, 2)
+                return self._own_sequence_wins(i + m.size, m.sig)
             if not m.first:
                 return self._sequence_ahead(i + m.size, m.sig, 2)
             return True
@@ -507,6 +536,52 @@ class _BookletParser:
         if m.first:
             return m.style == cur.opt_sig[1] or not _guarded(self.toks, i)
         return m.style == cur.opt_sig[1] and not _guarded(self.toks, i)
+
+    def _is_restart(self, m: _Marker) -> bool:
+        """Numbered instructions ("۱- ... ۲- ...") before the real first question."""
+        cur = self.cur
+        if cur is None or m.value != 1 or not m.first or any(q.nopts for q in self.questions):
+            return False
+        stem = cur.fields["stem"]
+        return any(
+            t.first
+            and (n := _marker_at(stem, k)) is not None
+            and n.value == 2
+            and n.style == m.style
+            for k, t in enumerate(stem)
+        )
+
+    def _reappears_after_options(self, start: int, m: _Marker) -> bool:
+        seen_options = False
+        for j in range(start, min(len(self.toks), start + 2 * LOOKAHEAD_TOKENS)):
+            n = _marker_at(self.toks, j)
+            if n is None:
+                continue
+            if n.value == 1 and (n.sig == self.o_sig or self.o_sig is None):
+                seen_options = True
+            elif seen_options and n.first and n.kind == "digit" and n.style == m.style:
+                return n.value <= m.value
+        return False
+
+    def _own_sequence_wins(self, start: int, sig: tuple[str, str]) -> bool:
+        """A "1" marker in an unusual style: real options, or items inside the stem?
+
+        Follow its own sequence (2, 3, 4); meeting the document's usual option "1"
+        first means these were stem items ("الف) ... د)" then "۱) ... ۴)").
+        """
+        expect = 2
+        next_q = self.cur.number + 1 if self.cur else None
+        for j in range(start, min(len(self.toks), start + LOOKAHEAD_TOKENS)):
+            n = _marker_at(self.toks, j)
+            if n is None or (not n.first and _guarded(self.toks, j)):
+                continue
+            if n.sig == sig and n.value == expect:
+                expect += 1
+            elif n.sig == self.o_sig and n.value == 1:
+                return False
+            elif n.first and n.kind == "digit" and n.value == next_q:
+                break
+        return expect >= 3
 
     def _sequence_ahead(self, start: int, sig: tuple[str, str], value: int) -> bool:
         """Is there a `value` marker with `sig` ahead, before the next question starts?"""
@@ -537,7 +612,7 @@ class _BookletParser:
             self.cur.number = m.value
             self.cur.marker_toks["stem"] = markers
             return
-        if self.cur is not None and m.value == 1 and all(q.nopts == 0 for q in self.questions):
+        if self._is_restart(m):
             self.questions.clear()
         self.cur = _Build(number=m.value, subject=self.subject)
         self.cur.marker_toks["stem"] = markers
@@ -549,9 +624,9 @@ class _BookletParser:
         cur.nopts += 1
         if cur.nopts == 1:
             cur.opt_sig = m.sig
-        cur.field = f"option:{cur.nopts}"
-        cur.fields[cur.field] = []
-        cur.marker_toks[cur.field] = self.toks[i : i + m.size]
+        cur.current = f"option:{cur.nopts}"
+        cur.fields[cur.current] = []
+        cur.marker_toks[cur.current] = self.toks[i : i + m.size]
 
 
 # ------------------------------------------------------------- explanations FSM

@@ -15,7 +15,6 @@ from app.models import Line, Word
 
 LOW_CONF = 60.0
 _ARABIC_RE = re.compile(r"[؀-ۿ]")
-_LATIN_RE = re.compile(r"[A-Za-z]")
 WATERMARK_RE = re.compile(
     r"cam\s*scanner|scanned\s+(with|by|using)|اسکن\s*شده\s*(با|توسط)|adobe\s*scan|"
     r"genius\s*scan|tiny\s*scanner|clear\s*scan|microsoft\s*lens|office\s*lens|"
@@ -45,7 +44,7 @@ def tesseract_available(settings: Settings, lang: str = "fas") -> bool:
     try:
         _configure(settings)
         return lang in pytesseract.get_languages(config="")
-    except Exception:
+    except Exception:  # noqa: BLE001 — any failure means "not available"
         return False
 
 
@@ -83,14 +82,11 @@ def _to_lines(data: dict[str, list], width: int, height: int, page: int) -> list
 
     lines: list[Line] = []
     for key in order:
-        items = groups[key]
-        rtl = any(_ARABIC_RE.search(w.text) for _, w in items)
-        # Persian lines read right-to-left; Tesseract's own word order is not reliable for
-        # mixed runs, so sort by geometry.
-        items.sort(key=lambda t: -(t[1].bbox[2]) if rtl else t[1].bbox[0])
-        words = [w for _, w in items]
-        if rtl:
-            words = _restore_ltr_runs(words)
+        # Tesseract's LSTM emits words in logical reading order (right-to-left for Persian);
+        # its RTL word boxes are often bloated and overlap, so geometry is a worse guide.
+        words = [w for _, w in groups[key]]
+        if any(_ARABIC_RE.search(w.text) for w in words):
+            _tighten_rtl_boxes(words)
         text = " ".join(w.text for w in words)
         if WATERMARK_RE.search(text):
             continue
@@ -98,25 +94,33 @@ def _to_lines(data: dict[str, list], width: int, height: int, page: int) -> list
     return lines
 
 
-def _restore_ltr_runs(words: list[Word]) -> list[Word]:
-    out: list[Word] = []
-    run: list[Word] = []
-    for w in words:
-        if _LATIN_RE.search(w.text) and not _ARABIC_RE.search(w.text):
-            run.append(w)
-        else:
-            out.extend(reversed(run))
-            run = []
-            out.append(w)
-    out.extend(reversed(run))
-    return out
+def _tighten_rtl_boxes(words: list[Word]) -> None:
+    """Clip each word box so it doesn't extend over its RTL neighbours (in reading order the
+    previous word lies to the right, the next to the left)."""
+    for i, w in enumerate(words):
+        if w.bbox is None:
+            continue
+        x0, y0, x1, y1 = w.bbox
+        prev = words[i - 1].bbox if i > 0 else None
+        nxt = words[i + 1].bbox if i + 1 < len(words) else None
+        if prev is not None and prev[0] < x1 and prev[0] > x0:
+            x1 = prev[0]
+        if nxt is not None and nxt[2] > x0 and nxt[2] < x1:
+            x0 = nxt[2]
+        if x1 > x0:
+            w.bbox = (x0, y0, x1, y1)
 
 
 def _union(boxes) -> tuple[float, float, float, float] | None:
     bs = [b for b in boxes if b is not None]
     if not bs:
         return None
-    return (min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs))
+    return (
+        min(b[0] for b in bs),
+        min(b[1] for b in bs),
+        max(b[2] for b in bs),
+        max(b[3] for b in bs),
+    )
 
 
 def is_multicolumn(gray: np.ndarray) -> bool:
@@ -124,11 +128,13 @@ def is_multicolumn(gray: np.ndarray) -> bool:
     through most of the text — i.e. a two-column layout."""
     h, w = gray.shape[:2]
     s = 800 / max(h, w)
-    small = cv2.resize(gray, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA) if s < 1 else gray
+    small = (
+        cv2.resize(gray, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA) if s < 1 else gray
+    )
     mask = cv2.adaptiveThreshold(
         small, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 25, 15
     )
-    sh, sw = mask.shape
+    sw = mask.shape[1]
     rows = mask.sum(1) > 0.01 * 255 * sw
     if rows.sum() < 10:
         return False
@@ -150,7 +156,9 @@ def is_multicolumn(gray: np.ndarray) -> bool:
     return best >= 0.015 * bw
 
 
-def ocr_tesseract(gray: np.ndarray, page: int, settings: Settings, psm: int | None = None) -> list[Line]:
+def ocr_tesseract(
+    gray: np.ndarray, page: int, settings: Settings, psm: int | None = None
+) -> list[Line]:
     """OCR a (preprocessed) gray page.
 
     psm: None = automatic — psm 4 (single column, variable sizes: most robust on booklets and

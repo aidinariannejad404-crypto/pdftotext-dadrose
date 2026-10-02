@@ -111,7 +111,12 @@ def warp_quad(img: np.ndarray, quad: np.ndarray) -> np.ndarray:
     h = int(max(np.linalg.norm(bl - tl), np.linalg.norm(br - tr)))
     dst = np.float32([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]])
     m = cv2.getPerspectiveTransform(quad.astype(np.float32), dst)
-    return cv2.warpPerspective(img, m, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    out = cv2.warpPerspective(
+        img, m, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE
+    )
+    # Trim a thin margin: the detected edge usually keeps a sliver of the dark background.
+    t = max(2, int(0.006 * max(w, h)))
+    return out[t : h - t, t : w - t]
 
 
 # --------------------------------------------------------------------------- orientation
@@ -129,7 +134,9 @@ def _profile_score(mask: np.ndarray) -> float:
     return float(np.var(rows))
 
 
-def detect_orientation(gray: np.ndarray, tesseract_cmd: str | None = None, tessdata_dir: str = "") -> int:
+def detect_orientation(
+    gray: np.ndarray, tesseract_cmd: str | None = None, tessdata_dir: str = ""
+) -> int:
     """Clockwise rotation (0/90/180/270) that makes the text upright."""
     small, _ = _downscale(gray, 1600)
     try:
@@ -143,7 +150,7 @@ def detect_orientation(gray: np.ndarray, tesseract_cmd: str | None = None, tessd
         osd = pytesseract.image_to_osd(small, config=cfg, output_type=pytesseract.Output.DICT)
         if float(osd.get("orientation_conf", 0)) >= OSD_MIN_CONF:
             return int(osd.get("rotate", 0)) % 360
-    except Exception as exc:  # OSD fails on pages with too little text
+    except Exception as exc:  # noqa: BLE001 — OSD fails on pages with too little text
         log.debug("OSD failed: %s", exc)
     # Fallback: horizontal text lines give a much spikier row profile than columns do.
     mask = _text_mask(_downscale(gray, 800)[0])
@@ -203,7 +210,7 @@ def estimate_background(gray: np.ndarray) -> np.ndarray:
     """Paper-colour background: close (dilate) away dark text, then median-smooth.
     Computed on a downscaled copy for speed."""
     small, s = _downscale(gray, 900)
-    k = max(7, int(round(min(small.shape) / 60)) | 1)
+    k = max(7, round(min(small.shape) / 60) | 1)
     bg = cv2.dilate(small, cv2.getStructuringElement(cv2.MORPH_RECT, (k, k)))
     bg = cv2.medianBlur(bg, 21)
     if s != 1.0:

@@ -236,13 +236,17 @@ def update_question(project_id: str, number: int, update: QuestionUpdate):
     with store.lock(project_id):
         project = _load(project_id)
         question = _find(project, number)
-        changes = update.model_dump(exclude_unset=True)
         content_fields = {"subject_key", "stem", "options", "correct_key", "explanation"}
-        for key in changes:
+        changed = {
+            key
+            for key in update.model_dump(exclude_unset=True)
+            if getattr(question, key) != getattr(update, key)
+        }
+        for key in changed:
             setattr(question, key, getattr(update, key))
-        if "correct_key" in changes:
+        if "correct_key" in changed:
             question.key_source = "manual"
-        if content_fields & changes.keys():
+        if content_fields & changed:
             question.edited = True
         _revalidate(project)
         store.save(project)
@@ -354,6 +358,18 @@ def export_json(project_id: str, only_approved: bool = False):
     return JSONResponse(
         payload,
         headers={"Content-Disposition": f'attachment; filename="dadrose-{project.id}.json"'},
+    )
+
+
+@app.get("/api/projects/{project_id}/export.docx")
+def export_docx(project_id: str, only_approved: bool = False, exam_header: bool = True):
+    from .export_docx import to_docx
+
+    project = _load(project_id)
+    return Response(
+        to_docx(project, only_approved, exam_header),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="dadrose-{project.id}.docx"'},
     )
 
 

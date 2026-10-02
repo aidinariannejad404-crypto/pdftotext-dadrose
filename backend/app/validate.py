@@ -25,23 +25,35 @@ _KEY_WORDS = {
     "چهار": "4",
     "چهارم": "4",
 }
-_KEY_VALUE = r"[«\"'(\[]?\s*([1-4]|الف|چهارم|چهار|سوم|دوم|اول|یک|سه|دو|ب|ج|د)(?![\w])"
+_KEY_VALUE = r"[«\"'(\[]?\s*([1-4]|الف|چهارم|چهار|سوم|دوم|اول|یک|سه|دو|ب|ج|د)(?![\w])[»\"')\]]?"
+_OPTION_WORD = r"گزینه[\u200c\s]*(?:ی\s*)?(?:شماره\s*)?"
 _STATED_KEY = [
-    re.compile(r"گزینه[‌\s]*(?:ی\s*)?(?:شماره\s*)?" + _KEY_VALUE),
+    re.compile(_OPTION_WORD + _KEY_VALUE),
     re.compile(r"(?:پاسخ|جواب)\s*(?:صحیح|درست)?\s*[:：]?\s*(?:گزینه\s*)?" + _KEY_VALUE),
+]
+# Unambiguous statements accepted anywhere (e.g. after a repeated question text).
+_STRONG_KEY = [
+    re.compile(_OPTION_WORD + _KEY_VALUE + r"\s*(?:صحیح|درست)"),
+    re.compile(r"(?:پاسخ|جواب)\s*(?:صحیح|درست)?\s*[:：]\s*(?:گزینه\s*)?" + _KEY_VALUE),
 ]
 
 
+def _key_value(m: re.Match[str]) -> str:
+    return _KEY_WORDS.get(m.group(1), m.group(1))
+
+
 def stated_key(explanation: str, window: int = 200) -> str | None:
-    """The correct option an explanation states near its beginning ("گزینه ۳ صحیح است")."""
-    head = to_ascii_digits(normalize_text(explanation[: window * 2]))[:window]
-    best: tuple[int, str] | None = None
-    for pattern in _STATED_KEY:
-        m = pattern.search(head)
-        if m and (best is None or m.start() < best[0]):
-            value = m.group(1)
-            best = (m.start(), _KEY_WORDS.get(value, value))
-    return best[1] if best else None
+    """The correct option an explanation states ("گزینه ۳ صحیح است", "پاسخ: ۲").
+
+    Any mention of an option near the beginning counts; further in, only explicit
+    statements do.
+    """
+    text = to_ascii_digits(normalize_text(explanation))
+    head = text[:window]
+    hits = [m for p in _STATED_KEY if (m := p.search(head))]
+    if not hits:
+        hits = [m for p in _STRONG_KEY if (m := p.search(text))]
+    return _key_value(min(hits, key=lambda m: m.start())) if hits else None
 
 
 def _issue(level: str, code: str, message: str, field: str | None = None) -> Issue:

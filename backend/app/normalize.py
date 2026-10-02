@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 
-ZWNJ = "‌"
+ZWNJ = chr(0x200C)  # zero-width non-joiner (نیم‌فاصله)
 
 _PERSIAN_DIGITS = "۰۱۲۳۴۵۶۷۸۹"
 _ARABIC_DIGITS = "٠١٢٣٤٥٦٧٨٩"

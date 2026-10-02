@@ -16,9 +16,11 @@ from app.models import BBox, Line, Word
 LOW_AGREEMENT = 0.40
 
 _DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
-_CHARS = str.maketrans({"ي": "ی", "ى": "ی", "ئ": "ی", "ك": "ک", "ة": "ه", "ۀ": "ه", "أ": "ا", "إ": "ا", "آ": "ا"})
+_CHARS = str.maketrans(
+    {"ي": "ی", "ى": "ی", "ئ": "ی", "ك": "ک", "ة": "ه", "ۀ": "ه", "أ": "ا", "إ": "ا", "آ": "ا"}
+)
 # ZWNJ, ZWJ, tatweel, bidi marks, harakat (tashkil).
-_STRIP_RE = re.compile(r"[‌‍‎‏ـً-ٰٟ]")
+_STRIP_RE = re.compile("[\u200c\u200d\u200e\u200f\u0640\u064b-\u065f\u0670]")
 _PUNCT_RE = re.compile(r"[^\w]", re.UNICODE)
 
 
@@ -42,7 +44,12 @@ def _union(boxes) -> BBox | None:
     bs = [b for b in boxes if b is not None]
     if not bs:
         return None
-    return (min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs))
+    return (
+        min(b[0] for b in bs),
+        min(b[1] for b in bs),
+        max(b[2] for b in bs),
+        max(b[3] for b in bs),
+    )
 
 
 def _split_box(box: BBox | None, n: int, rtl: bool = True) -> list[BBox | None]:
@@ -66,9 +73,7 @@ def _tokenize_ai(ai_text: str) -> list[list[str]]:
     return lines
 
 
-def _merge_near_identical(
-    ai: list[str], tess: list[str]
-) -> bool:
+def _merge_near_identical(ai: list[str], tess: list[str]) -> bool:
     """AI span equals Tesseract span once spaces are removed (ZWNJ vs space splits)."""
     return comparable("".join(ai)) == comparable("".join(tess)) and bool(comparable("".join(ai)))
 
@@ -90,7 +95,6 @@ def merge(ai_text: str, tess_lines: list[Line], page: int) -> tuple[list[Line], 
         return lines, warnings
 
     ai_flat: list[str] = [t for toks in ai_lines for t in toks]
-    ai_line_of: list[int] = [i for i, toks in enumerate(ai_lines) for _ in toks]
     a_keys = [comparable(t) or t for t in ai_flat]
     t_keys = [comparable(w.text) or w.text for w in tess_words]
 
@@ -121,7 +125,11 @@ def merge(ai_text: str, tess_lines: list[Line], page: int) -> tuple[list[Line], 
                         agreed += 1
                     else:
                         out_words[i1 + k] = Word(
-                            text=ai_span[k], bbox=tw.bbox, conf=tw.conf, flag="disagree", alt=tw.text
+                            text=ai_span[k],
+                            bbox=tw.bbox,
+                            conf=tw.conf,
+                            flag="disagree",
+                            alt=tw.text,
                         )
                 continue
             same = _merge_near_identical(ai_span, [w.text for w in tess_span])
@@ -143,12 +151,11 @@ def merge(ai_text: str, tess_lines: list[Line], page: int) -> tuple[list[Line], 
     # Assemble lines following the AI structure; estimate missing boxes from neighbours.
     result: list[Line] = []
     pos = 0
-    for li, toks in enumerate(ai_lines):
+    for toks in ai_lines:
         words = [w for w in out_words[pos : pos + len(toks)] if w is not None]
         pos += len(toks)
         _estimate_missing_boxes(words)
         result.append(Line(page=page, words=words, bbox=_union(w.bbox for w in words)))
-    del ai_line_of
 
     # Tesseract lines with several confident words and no match at all → AI may have
     # skipped them.
@@ -156,9 +163,7 @@ def merge(ai_text: str, tess_lines: list[Line], page: int) -> tuple[list[Line], 
         idx = [k for k, x in enumerate(tess_line_of) if x == li]
         confident = [k for k in idx if (tess_words[k].conf or 0) >= 70]
         if len(confident) >= 3 and not any(matched_tess[k] for k in idx):
-            warnings.append(
-                f"احتمال جاافتادن یک سطر در متن هوش مصنوعی: «{ln.text[:60]}»"
-            )
+            warnings.append(f"احتمال جاافتادن یک سطر در متن هوش مصنوعی: «{ln.text[:60]}»")
 
     agreement = agreed / max(len(ai_flat), len(tess_words))
     if agreement < LOW_AGREEMENT:

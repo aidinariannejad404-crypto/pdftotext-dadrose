@@ -70,7 +70,7 @@ _CENTER_1402_RANGES = [
     (121, 130, "constitutional"),
 ]
 
-# Each: code, title, track, year, question_count, ranges [(from, to, subject_key)] (inclusive).
+# Each: code, title, track, year, question_count, duration_minutes, ranges [(from, to, subject_key)] (inclusive).
 BLUEPRINTS: list[dict] = [
     {
         "code": "BAR-1405",
@@ -78,6 +78,7 @@ BLUEPRINTS: list[dict] = [
         "track": "bar",
         "year": 1405,
         "question_count": 140,
+        "duration_minutes": 170,
         "ranges": _BAR_RANGES,
     },
     {
@@ -86,6 +87,7 @@ BLUEPRINTS: list[dict] = [
         "track": "center",
         "year": 1404,
         "question_count": 135,
+        "duration_minutes": 150,
         "ranges": _CENTER_1404_RANGES,
     },
     {
@@ -94,6 +96,7 @@ BLUEPRINTS: list[dict] = [
         "track": "center",
         "year": 1405,
         "question_count": 135,
+        "duration_minutes": 150,
         "ranges": list(_CENTER_1404_RANGES),
     },
     {
@@ -102,6 +105,7 @@ BLUEPRINTS: list[dict] = [
         "track": "center",
         "year": 1402,
         "question_count": 130,
+        "duration_minutes": 150,
         "ranges": _CENTER_1402_RANGES,
     },
 ]

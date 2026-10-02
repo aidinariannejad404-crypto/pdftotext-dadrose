@@ -25,7 +25,7 @@ MIN_TEXT_CHARS = 20
 # A single image covering this share of the page means "scanned page".
 FULL_PAGE_IMAGE_RATIO = 0.8
 
-_ARABIC_RE = re.compile(r"[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]")
+_ARABIC_RE = re.compile(r"[؀-ۿݐ-ݿ\ufb50-\ufdff\ufe70-\ufeff]")
 _LATIN_RE = re.compile(r"[A-Za-z]")
 
 # PDFs store the *mirrored* glyph for brackets inside RTL runs, so "۱)" extracts as "۱(".
@@ -74,7 +74,7 @@ def is_garbage(text: str) -> bool:
     if bad / n > 0.05:
         return True
     # Accented Latin dominating with (almost) no Arabic script = custom-encoded Persian font.
-    return mojibake / n > 0.15 and arabic / n < 0.2
+    return mojibake / n > 0.3 and arabic / n < 0.2
 
 
 def is_reversed_persian(words: list[str]) -> bool:
@@ -90,9 +90,9 @@ def fix_reversed(word: str) -> str:
 
 
 def _clean(text: str) -> str:
-    # NFKC folds Arabic presentation forms (ﺻ ﻮ ﯽ ...) to the base letters.
+    # NFKC folds Arabic presentation forms (\ufebb \ufeee \ufbfd ...) to the base letters.
     text = unicodedata.normalize("NFKC", text)
-    return text.replace("‏", "").replace("‎", "").strip()
+    return text.replace("\u200f", "").replace("\u200e", "").strip()
 
 
 # ----------------------------------------------------------------------------- extraction
@@ -107,37 +107,43 @@ class _RawWord:
     y1: float
 
 
-def _raw_words(page: pymupdf.Page) -> list[list[_RawWord]]:
-    """Words per PDF text line, built from characters (split on whitespace) so that glyph
-    runs broken at non-joining letters are kept together."""
+def _chars_to_word(chars: list[dict], rot: pymupdf.Matrix) -> _RawWord:
+    r = pymupdf.Rect()
+    for c in chars:
+        r |= pymupdf.Rect(c["bbox"]) * rot
+    return _RawWord("".join(c["c"] for c in chars), r.x0, r.y0, r.x1, r.y1)
+
+
+def _raw_words(page: pymupdf.Page) -> tuple[list[list[_RawWord]], int]:
+    """Words per PDF text line (in displayed-page coordinates), built from characters split
+    on whitespace so that glyph runs broken at non-joining letters are kept together.
+    Also returns the number of characters on lines that are not horizontal as displayed."""
     out: list[list[_RawWord]] = []
     raw = page.get_text("rawdict", flags=pymupdf.TEXT_PRESERVE_WHITESPACE)
     rot = page.rotation_matrix
+    off_axis = 0
     for block in raw["blocks"]:
         for line in block.get("lines", []):
+            dx, dy = line["dir"]
+            shown = pymupdf.Point(dx, dy) * pymupdf.Matrix(rot.a, rot.b, rot.c, rot.d, 0, 0)
+            if abs(shown.x) < 0.95:
+                off_axis += sum(len(sp["chars"]) for sp in line["spans"])
+                continue
             words: list[_RawWord] = []
-            cur: list[dict] = []
-
-            def flush() -> None:
-                if not cur:
-                    return
-                text = "".join(c["c"] for c in cur)
-                r = pymupdf.Rect()
-                for c in cur:
-                    r |= pymupdf.Rect(c["bbox"]) * rot
-                words.append(_RawWord(text, r.x0, r.y0, r.x1, r.y1))
-                cur.clear()
-
             for span in line["spans"]:
+                cur: list[dict] = []
                 for ch in span["chars"]:
                     if ch["c"].isspace():
-                        flush()
+                        if cur:
+                            words.append(_chars_to_word(cur, rot))
+                        cur = []
                     else:
                         cur.append(ch)
-                flush()  # spans never continue a word across a font change gap
+                if cur:  # adjacent fragments of one word are re-joined in _order_line
+                    words.append(_chars_to_word(cur, rot))
             if words:
                 out.append(words)
-    return out
+    return out, off_axis
 
 
 def _group_lines(pdf_lines: list[list[_RawWord]]) -> list[list[_RawWord]]:
@@ -169,7 +175,11 @@ def _order_line(words: list[_RawWord]) -> list[_RawWord]:
             gap = (p.x0 - w.x1) if rtl else (w.x0 - p.x1)
             if gap < 0.08 * h:
                 merged[-1] = _RawWord(
-                    p.text + w.text, min(p.x0, w.x0), min(p.y0, w.y0), max(p.x1, w.x1), max(p.y1, w.y1)
+                    p.text + w.text,
+                    min(p.x0, w.x0),
+                    min(p.y0, w.y0),
+                    max(p.x1, w.x1),
+                    max(p.y1, w.y1),
                 )
                 continue
         merged.append(w)
@@ -186,7 +196,9 @@ def _order_line(words: list[_RawWord]) -> list[_RawWord]:
                 out.append(w)
         out.extend(reversed(run))
         merged = [
-            w if _LATIN_RE.search(w.text) else _RawWord(w.text.translate(_MIRROR), w.x0, w.y0, w.x1, w.y1)
+            w
+            if _LATIN_RE.search(w.text)
+            else _RawWord(w.text.translate(_MIRROR), w.x0, w.y0, w.x1, w.y1)
             for w in out
         ]
     return merged
@@ -204,9 +216,11 @@ def _has_full_page_image(page: pymupdf.Page) -> bool:
 
 def extract_text_lines(page: pymupdf.Page, index: int) -> tuple[list[Line] | None, str | None]:
     """Text-layer lines in reading order, or (None, reason) when the layer is not usable."""
-    pdf_lines = _raw_words(page)
+    pdf_lines, off_axis = _raw_words(page)
     all_text = " ".join(w.text for ws in pdf_lines for w in ws)
     n_chars = sum(1 for c in all_text if not c.isspace())
+    if off_axis > n_chars:
+        return None, "rotated_text"  # sideways text: OCR fixes the orientation
     if n_chars < MIN_TEXT_CHARS:
         return None, "no_text" if n_chars == 0 else "too_little_text"
     if _has_full_page_image(page):
@@ -248,7 +262,12 @@ def union_bbox(boxes) -> tuple[float, float, float, float] | None:
     bs = [b for b in boxes if b is not None]
     if not bs:
         return None
-    return (min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs))
+    return (
+        min(b[0] for b in bs),
+        min(b[1] for b in bs),
+        max(b[2] for b in bs),
+        max(b[3] for b in bs),
+    )
 
 
 def render_page(page: pymupdf.Page, dpi: int) -> np.ndarray:
@@ -262,7 +281,7 @@ def render_document(pdf_bytes: bytes, dpi: int) -> Iterator[RenderedPage]:
         for i, page in enumerate(doc):
             try:
                 lines, note = extract_text_lines(page, i)
-            except Exception as exc:  # malformed content streams: just OCR the page
+            except Exception as exc:  # noqa: BLE001 — malformed content: just OCR the page
                 lines, note = None, f"error: {exc}"
             yield RenderedPage(
                 index=i,

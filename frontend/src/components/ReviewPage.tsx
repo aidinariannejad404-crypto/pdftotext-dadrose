@@ -433,8 +433,16 @@ export default function ReviewPage({ id }: { id: string }) {
             <input type="checkbox" checked={onlyApproved} onChange={(e) => setOnlyApproved(e.target.checked)} />
             <span>فقط تأییدشده‌ها</span>
           </label>
+          <a
+            className="btn btn-sm"
+            href={exportUrl(id, onlyApproved, 'docx')}
+            download={`dadrose-${id}.docx`}
+            title="فایل Word در قالب رسمی «ورود هوشمند از ورد» سایت دادرز"
+          >
+            <Icon name="download" size={16} /> دانلود Word
+          </a>
           <a className="btn btn-sm" href={exportUrl(id, onlyApproved)} download={`dadrose-${id}.json`}>
-            <Icon name="download" size={16} /> دانلود JSON
+            <Icon name="download" size={16} /> JSON
           </a>
           <button
             className="btn btn-sm btn-primary"

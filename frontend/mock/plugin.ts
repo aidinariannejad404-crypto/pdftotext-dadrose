@@ -21,7 +21,7 @@ function seed() {
       ...makeReadyProject('p-processing', 'آزمون مرکز وکلا ۱۴۰۴ (در حال پردازش)', new Date(now - 60_000).toISOString()),
       track: 'center', year: 1404, status: 'processing', questions: [], issues: [],
       progress: { stage: 'ocr', done: 5, total: 14 },
-      _startedAt: now - 60_000, _duration: 30 * 60_000,
+      _startedAt: now - 10 * 60_000, _duration: 20 * 60_000, // stays in the OCR stage
     },
     makeReadyProject('demo', 'آزمون کانون وکلا ۱۴۰۳', new Date(now - 3600_000).toISOString()),
     {

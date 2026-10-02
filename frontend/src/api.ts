@@ -74,8 +74,8 @@ export function pageImageUrl(id: string, doc: DocKind, page: number, orig = fals
   return `/api/projects/${enc(id)}/pages/${doc}/${page}.jpg${orig ? '?variant=orig' : ''}`;
 }
 
-export function exportUrl(id: string, onlyApproved: boolean): string {
-  return `/api/projects/${enc(id)}/export.json${onlyApproved ? '?only_approved=1' : ''}`;
+export function exportUrl(id: string, onlyApproved: boolean, format: 'json' | 'docx' = 'json'): string {
+  return `/api/projects/${enc(id)}/export.${format}${onlyApproved ? '?only_approved=1' : ''}`;
 }
 
 /** Multipart upload with progress (XHR, since fetch has no upload progress). */

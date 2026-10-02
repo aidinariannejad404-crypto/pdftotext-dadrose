@@ -10,8 +10,8 @@ export const PAGE_H = 1754;
 const FONT = 25;
 const LINE_H = 46;
 const MARGIN_X = 96;
-const CHAR_W = 11.2;
-const SPACE_W = 9;
+const CHAR_W = 13.6;
+const SPACE_W = 11;
 
 export const META: Meta = {
   blueprints: [

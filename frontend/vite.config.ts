@@ -1,11 +1,11 @@
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, type PluginOption } from 'vite';
 import react from '@vitejs/plugin-react';
 import { mockApiPlugin } from './mock/plugin';
 
 // `npm run dev:mock` (mode "mock") serves a fake API in-process so the UI can be
 // exercised without the FastAPI backend; otherwise /api is proxied to it.
 export default defineConfig(({ mode }) => {
-  const plugins: Plugin[] = [react()];
+  const plugins: PluginOption[] = [react()];
   if (mode === 'mock') plugins.push(mockApiPlugin());
   return {
     plugins,

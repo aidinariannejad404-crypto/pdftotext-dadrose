@@ -112,7 +112,10 @@ class ClaudeEngine:
     def transcribe(self, jpeg: bytes, mode: Mode = "page") -> str:
         b64 = base64.standard_b64encode(jpeg).decode("ascii")
         content = [
-            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
+            {
+                "type": "image",
+                "source": {"type": "base64", "media_type": "image/jpeg", "data": b64},
+            },
             {"type": "text", "text": prompt_for(mode)},
         ]
         try:
@@ -124,7 +127,9 @@ class ClaudeEngine:
                 raise AiEngineError("کلید API برای Claude نامعتبر است یا دسترسی ندارد.") from exc
             raise AiEngineError(f"خطای سرویس Claude (کد {exc.status_code}).") from exc
         except anthropic.APIConnectionError as exc:
-            raise AiEngineError("اتصال به سرویس Claude برقرار نشد (شبکه/پراکسی را بررسی کنید).") from exc
+            raise AiEngineError(
+                "اتصال به سرویس Claude برقرار نشد (شبکه/پراکسی را بررسی کنید)."
+            ) from exc
 
         if response.stop_reason == "refusal":
             raise AiEngineError("Claude از رونویسی این تصویر خودداری کرد.")
@@ -169,7 +174,9 @@ class GeminiEngine:
         try:
             r = self.client.post(url, json=body, headers={"x-goog-api-key": s.gemini_api_key})
         except httpx.HTTPError as exc:
-            raise AiEngineError("اتصال به سرویس Gemini برقرار نشد (شبکه/پراکسی را بررسی کنید).") from exc
+            raise AiEngineError(
+                "اتصال به سرویس Gemini برقرار نشد (شبکه/پراکسی را بررسی کنید)."
+            ) from exc
         if r.status_code == 429:
             raise AiEngineError("محدودیت تعداد درخواست Gemini؛ کمی بعد دوباره تلاش کنید.")
         if r.status_code in (401, 403):

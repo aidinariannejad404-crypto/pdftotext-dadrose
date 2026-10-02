@@ -62,7 +62,11 @@ def _ai_read(
     try:
         text = ai.transcribe(_jpeg(_resize_max(gray, AI_MAX_SIDE), 90), mode)  # type: ignore[arg-type]
     except AiEngineError as exc:
-        return tess, [f"خواندن با {ai.name} ناموفق بود: {exc} — نتیجه‌ی Tesseract استفاده شد."], False
+        return (
+            tess,
+            [f"خواندن با {ai.name} ناموفق بود: {exc} — نتیجه‌ی Tesseract استفاده شد."],
+            False,
+        )
     except Exception as exc:  # never fail the whole document because of one AI call
         log.exception("AI engine %s failed", ai.name)
         return tess, [f"خطای غیرمنتظره در {ai.name}: {exc} — نتیجه‌ی Tesseract استفاده شد."], False

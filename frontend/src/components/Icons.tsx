@@ -48,8 +48,7 @@ export function BrandMark() {
   return (
     <svg className="brand-mark" width="36" height="36" viewBox="0 0 32 32" aria-hidden="true">
       <rect width="32" height="32" rx="8" fill="#0b2545" />
-      <path d="M9 8h8.5a6.5 6.5 0 0 1 0 13H13v3H9z" fill="#e7b72c" />
-      <path d="M13 12h4.3a2.5 2.5 0 0 1 0 5H13z" fill="#0b2545" />
+      <text x="16" y="22" textAnchor="middle" fontSize="19" fontWeight="800" fill="#e7b72c" fontFamily="Vazirmatn, Tahoma, sans-serif">د</text>
     </svg>
   );
 }

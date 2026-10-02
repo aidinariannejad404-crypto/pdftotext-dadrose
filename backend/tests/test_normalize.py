@@ -1,6 +1,8 @@
 from app.normalize import comparable, normalize_text, to_ascii_digits, to_persian_digits
 
-ZWNJ = "‌"
+ZWNJ = chr(0x200C)
+ZWSP = chr(0x200B)
+BOM = chr(0xFEFF)
 
 
 def test_arabic_letters_and_digits_become_persian():
@@ -21,7 +23,7 @@ def test_zwnj_cleanup():
     assert normalize_text(f"کتاب{ZWNJ}{ZWNJ}ها") == f"کتاب{ZWNJ}ها"
     assert normalize_text(f"خانه {ZWNJ}ای") == "خانه ای"
     assert normalize_text(f"{ZWNJ}سلام{ZWNJ}") == "سلام"
-    assert normalize_text("حق​وق﻿") == "حقوق"
+    assert normalize_text("حق" + ZWSP + "وق" + BOM) == "حقوق"
 
 
 def test_mi_prefix_gets_zwnj():

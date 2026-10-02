@@ -45,17 +45,17 @@ GROUND_TRUTH = "\n".join(GROUND_TRUTH_LINES)
 _CSS = f"""
 @font-face {{ font-family: fa; src: url({FONT}); }}
 body {{ font-family: fa; font-size: 14px; }}
-p {{ margin: 0 0 6px 0; }}
+p {{ margin: 0 0 6px 0; line-height: 1.5; }}
 p.q {{ margin-top: 14px; font-weight: normal; }}
 """
 
 
 def booklet_pdf() -> bytes:
     """A typed (text-layer) A4 page with 4 four-option questions."""
-    html = "".join(f"<p dir=\"rtl\">{line}</p>" for line in GROUND_TRUTH_LINES)
+    html = "".join(f'<p dir="rtl">{line}</p>' for line in GROUND_TRUTH_LINES)
     doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
-    page.insert_htmlbox(pymupdf.Rect(50, 60, 545, 800), f"<div dir=\"rtl\">{html}</div>", css=_CSS)
+    page.insert_htmlbox(pymupdf.Rect(50, 60, 545, 800), f'<div dir="rtl">{html}</div>', css=_CSS)
     return doc.tobytes()
 
 
@@ -66,9 +66,16 @@ def render(pdf_bytes: bytes, dpi: int = 200) -> np.ndarray:
         return cv2.cvtColor(img[:, :, :3], cv2.COLOR_RGB2BGR)
 
 
-def phone_scan(page_bgr: np.ndarray, angle: float = 4.0, seed: int = 0) -> np.ndarray:
+def phone_scan(
+    page_bgr: np.ndarray,
+    angle: float = 4.0,
+    seed: int = 0,
+    shadow: float = 0.45,
+    scale: float = 1.0,
+) -> np.ndarray:
     """Simulate a phone photo of the printed page: tilt, perspective, dark desk, shadow,
-    sensor noise, slight blur and JPEG compression."""
+    sensor noise, slight blur and JPEG compression. `shadow` is the darkening of the worst
+    corner (0..1); `scale` < 1 lowers the photo resolution."""
     rng = np.random.default_rng(seed)
     h, w = page_bgr.shape[:2]
     # Paper is slightly off-white.
@@ -97,24 +104,33 @@ def phone_scan(page_bgr: np.ndarray, angle: float = 4.0, seed: int = 0) -> np.nd
     out = np.where(mask[..., None] > 0, warped, desk)
     # Shadow: diagonal illumination gradient (dark lower-left corner) + soft blob.
     yy, xx = np.mgrid[0:ch, 0:cw].astype(np.float32)
-    grad = 1.0 - 0.45 * ((cw - xx) / cw) * (yy / ch)
+    grad = 1.0 - shadow * ((cw - xx) / cw) * (yy / ch)
     blob = np.exp(-(((xx - 0.75 * cw) / (0.25 * cw)) ** 2 + ((yy - 0.3 * ch) / (0.2 * ch)) ** 2))
-    illum = np.clip(grad - 0.2 * blob, 0.35, 1.0)
+    illum = np.clip(grad - 0.5 * shadow * blob, 0.2, 1.0)
     out = (out.astype(np.float32) * illum[..., None]).clip(0, 255)
     # Lower contrast, add noise, slight defocus.
     out = out * 0.85 + 20
     out += rng.normal(0, 6, out.shape)
     out = cv2.GaussianBlur(out.clip(0, 255).astype(np.uint8), (3, 3), 0.8)
+    if scale != 1.0:
+        out = cv2.resize(out, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
     ok, enc = cv2.imencode(".jpg", out, [cv2.IMWRITE_JPEG_QUALITY, 60])
     assert ok
     return cv2.imdecode(enc, cv2.IMREAD_COLOR)
+
+
+def hard_phone_scan(page_bgr: np.ndarray) -> np.ndarray:
+    """Low-resolution photo with a strong shadow and more tilt."""
+    return phone_scan(page_bgr, angle=-6.0, seed=3, shadow=0.7, scale=0.6)
 
 
 def clean_scan(page_bgr: np.ndarray) -> np.ndarray:
     """A flatbed-like scan: no geometry change, mild noise + JPEG."""
     rng = np.random.default_rng(1)
     out = page_bgr.astype(np.float32) + rng.normal(0, 3, page_bgr.shape)
-    ok, enc = cv2.imencode(".jpg", out.clip(0, 255).astype(np.uint8), [cv2.IMWRITE_JPEG_QUALITY, 80])
+    ok, enc = cv2.imencode(
+        ".jpg", out.clip(0, 255).astype(np.uint8), [cv2.IMWRITE_JPEG_QUALITY, 80]
+    )
     assert ok
     return cv2.imdecode(enc, cv2.IMREAD_COLOR)
 
@@ -142,6 +158,7 @@ def write_all(out: Path) -> dict[str, Path]:
         "typed.pdf": typed,
         "clean_scan.pdf": image_pdf([clean_scan(page)]),
         "phone_scan.pdf": image_pdf([phone_scan(page)]),
+        "phone_scan_hard.pdf": image_pdf([hard_phone_scan(page)]),
         "phone_scan_rot90.pdf": image_pdf(
             [cv2.rotate(phone_scan(page, angle=-3, seed=2), cv2.ROTATE_90_CLOCKWISE)]
         ),

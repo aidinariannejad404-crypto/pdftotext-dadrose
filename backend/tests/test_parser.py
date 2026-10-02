@@ -471,3 +471,97 @@ def test_parse_single_question_explanation():
 
 def test_parse_single_question_empty():
     assert parse_single_question([], "booklet") is None
+
+
+def test_key_table_labelled_grid_and_reversed_rtl_grid():
+    labelled = (
+        FOUR_Q
+        + "\nکلید سؤالات\n| سؤال | ۱ | ۲ |\n| پاسخ | ۴ | ۲ |\n| سؤال | ۳ | ۴ |\n| پاسخ | ۱ | ج |\n"
+    )
+    assert keys(parse(labelled)) == {1: "4", 2: "2", 3: "1", 4: "3"}
+    rtl = FOUR_Q + "\nپاسخنامه\n۴ ۳ ۲ ۱\nالف د ج ب\n"
+    assert keys(parse(rtl)) == {4: "1", 3: "4", 2: "3", 1: "2"}
+
+
+def test_full_booklet_ai_markdown_with_key_grid():
+    body = "\n".join(
+        f"**{n}.** به موجب ماده {n + 3}- قانون مدنی کدام صحیح است؟\n"
+        f"۱) حکم اول {n} ۲) حکم دوم\n۳) حکم سوم\n۴) حکم چهارم"
+        for n in range(1, 141)
+    )
+    rows = []
+    for r in range(0, 140, 10):
+        rows.append(" ".join(str(n) for n in range(r + 1, r + 11)))
+        rows.append(" ".join(str(n % 4 + 1) for n in range(r + 1, r + 11)))
+    result = parse(body + PAGE_BREAK + "\nکلید سؤالات\n" + "\n".join(rows), blueprint="BAR-1405")
+    qs = by_number(result)
+    assert sorted(qs) == list(range(1, 141))
+    assert codes(result.issues) == set()
+    assert all(len(q.options) == 4 and q.correct_key == str(q.number % 4 + 1) for q in qs.values())
+    assert qs[17].stem == "به موجب ماده 20- قانون مدنی کدام صحیح است؟"
+    assert qs[75].subject_key == "fiqh_bar" and qs[140].subject_key == "constitutional"
+    assert opts(qs[140]) == ["حکم اول 140", "حکم دوم", "حکم سوم", "حکم چهارم"]
+
+
+def test_same_marker_style_for_questions_and_options():
+    text = "\n".join(f"{n}- سؤال {n}؟\n۱- الف\n۲- ب\n۳- ج\n۴- د" for n in range(1, 8))
+    qs = by_number(parse(text))
+    assert sorted(qs) == list(range(1, 8))
+    assert all(opts(q) == ["الف", "ب", "ج", "د"] for q in qs.values())
+
+
+def test_explanations_with_prefix_and_repeated_question_text():
+    expl = """
+پاسخ سؤال ۱
+۱- سؤال اول درباره عقد بیع؟ ۱) الف ۲) ب ۳) ج ۴) د
+پاسخ: گزینه ۳ زیرا طبق ماده ۳۴۸ قانون مدنی...
+پاسخ سؤال ۲
+توضیح بدون ذکر کلید
+پاسخ سوال ۴
+گزینه ۲ صحیح است.
+"""
+    qs = by_number(parse(FOUR_Q, expl))
+    assert qs[1].correct_key == "3" and qs[1].key_source == "explanation"
+    assert qs[2].explanation == "توضیح بدون ذکر کلید" and qs[2].correct_key is None
+    assert qs[3].explanation == ""
+    assert qs[4].correct_key == "2"
+
+
+def test_numbered_items_in_first_stem_with_question_style():
+    text = """
+۱- کدام یک از موارد زیر از اسباب سقوط تعهدات است؟
+۱- اقاله
+۲- ابراء
+۳- تبدیل تعهد
+۱) فقط ۱ ۲) ۱ و ۲ ۳) همه موارد ۴) هیچکدام
+۲- سؤال دوم؟
+۱) الف ۲) ب ۳) ج ۴) د
+۳- سؤال سوم؟
+۱) الف ۲) ب ۳) ج ۴) د
+۵- پنجم؟
+۱) الف ۲) ب ۳) ج ۴) د
+۶- ششم؟
+۱) الف ۲) ب ۳) ج ۴) د
+"""
+    qs = by_number(parse(text))
+    assert sorted(qs) == [1, 2, 3, 5, 6]
+    assert qs[1].stem == (
+        "کدام یک از موارد زیر از اسباب سقوط تعهدات است؟ ۱- اقاله ۲- ابراء ۳- تبدیل تعهد"
+    )
+    assert opts(qs[1]) == ["فقط ۱", "۱ و ۲", "همه موارد", "هیچکدام"]
+    assert qs[2].stem == "سؤال دوم؟"
+
+
+def test_lost_options_and_option_style_variant():
+    base = "\n".join(f"{n}- سؤال {n}؟\n۱) الف ۲) ب ۳) ج ۴) د" for n in range(1, 7))
+    text = (
+        base
+        + "\n۷- سؤال هفتم که گزینه‌هایش خوانده نشد"
+        + "\n۸- سؤال هشتم؟\n۱- یک\n۲- دو\n۳- سه\n۴- چهار"
+        + "\n۹- نهم؟\n۱) الف ۲) ب ۳) ج ۴) د"
+    )
+    qs = by_number(parse(text))
+    assert sorted(qs) == list(range(1, 10))
+    assert qs[7].options == [] and "option_count" in codes(qs[7].issues)
+    assert opts(qs[8]) == ["یک", "دو", "سه", "چهار"]
+    assert opts(qs[9]) == ["الف", "ب", "ج", "د"]
