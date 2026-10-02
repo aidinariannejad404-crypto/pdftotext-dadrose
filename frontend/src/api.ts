@@ -1,5 +1,5 @@
 import type {
-  ClassifyEngine, DocKind, EngineName, Health, Meta, PageResult, PageText, PageTextUpdate, Project, ReviewMode, ProjectSummary, PushResult, Question, QuestionUpdate, SiteImportJob,
+  ClassifyEngine, DocKind, EngineName, Health, Meta, PageResult, PageText, PageTextUpdate, Project, ReviewMode, ProjectSummary, PushApprovedItem, PushResult, Question, QuestionUpdate, QueueState, ReviewQueueItem, SiteImportJob,
 } from './types';
 
 export class ApiError extends Error {
@@ -73,6 +73,13 @@ export const api = {
   classify: (id: string, engine: ClassifyEngine, numbers?: number[]) =>
     request<Project>('POST', `/api/projects/${enc(id)}/classify`, numbers ? { engine, numbers } : { engine }),
   setMode: (id: string, mode: ReviewMode) => request<Project>('POST', `/api/projects/${enc(id)}/mode`, { mode }),
+  autoApprove: (id: string) => request<{ approved: number; project: Project }>('POST', `/api/projects/${enc(id)}/auto-approve`),
+  reviewQueue: (projectId?: string, limit = 200) =>
+    request<ReviewQueueItem[]>('GET', `/api/review-queue?limit=${limit}${projectId ? `&project_id=${enc(projectId)}` : ''}`),
+  putKeys: (id: string, keys: string, start: number) => request<Project>('PUT', `/api/projects/${enc(id)}/keys`, { keys, start }),
+  pushApproved: (projectIds?: string[]) =>
+    request<PushApprovedItem[]>('POST', '/api/push-approved', projectIds ? { project_ids: projectIds } : {}),
+  queue: () => request<QueueState>('GET', '/api/queue'),
   siteCheck: () => request<{ ok: boolean }>('GET', '/api/site/check'),
   importJob: (jobId: string | number) => request<SiteImportJob>('GET', `/api/site/import-jobs/${enc(String(jobId))}`),
   push: (id: string, onlyApproved: boolean) =>
@@ -95,9 +102,21 @@ export function exportTextUrl(id: string, onlyApproved: boolean, format: 'docx' 
 
 /** Multipart upload with progress (XHR, since fetch has no upload progress). */
 export function createProject(form: FormData, onProgress?: (fraction: number) => void): Promise<Project> {
+  return upload<Project>('/api/projects', form, onProgress);
+}
+
+/** Batch upload: every file becomes its own project. */
+export function createBatch(
+  form: FormData,
+  onProgress?: (fraction: number) => void,
+): Promise<{ batch_id: string; projects: Project[] }> {
+  return upload('/api/projects/batch', form, onProgress);
+}
+
+function upload<T>(url: string, form: FormData, onProgress?: (fraction: number) => void): Promise<T> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', '/api/projects');
+    xhr.open('POST', url);
     xhr.responseType = 'text';
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
@@ -110,7 +129,7 @@ export function createProject(form: FormData, onProgress?: (fraction: number) =>
       } catch {
         data = null;
       }
-      if (xhr.status >= 200 && xhr.status < 300) resolve(data as Project);
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data as T);
       else {
         const detail = data && typeof data === 'object' && 'detail' in data ? (data as { detail: unknown }).detail : null;
         reject(new ApiError(xhr.status, detailToMessage(detail, xhr.status)));

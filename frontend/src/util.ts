@@ -304,3 +304,72 @@ export function searchable(s: string): string {
     .replace(/ك/g, 'ک')
     .toLowerCase();
 }
+
+// ------------------------------------------------------------- high volume
+
+export function durationText(seconds: number): string {
+  if (!seconds || seconds < 1) return '';
+  if (seconds < 60) return `${fa(Math.round(seconds))} ثانیه`;
+  const m = Math.round(seconds / 60);
+  if (m < 60) return `${fa(m)} دقیقه`;
+  return `${fa(Math.floor(m / 60))} ساعت و ${fa(m % 60)} دقیقه`;
+}
+
+const ENGINE_PRETTY: Record<string, string> = {
+  claude: 'Claude',
+  gemini: 'Gemini',
+  tesseract: 'Tesseract',
+  text_layer: 'لایه‌ی متنی PDF',
+  offline: 'آفلاین',
+};
+
+export function statsText(s: { pages: number; started_at: string | null; finished_at: string | null; ocr_seconds: number; parse_seconds: number; engine: string } | null | undefined): string {
+  if (!s) return '';
+  const parts: string[] = [];
+  if (s.pages) parts.push(`${fa(s.pages)} صفحه`);
+  let secs = s.ocr_seconds + s.parse_seconds;
+  if (s.started_at && s.finished_at) {
+    const d = (new Date(s.finished_at).getTime() - new Date(s.started_at).getTime()) / 1000;
+    if (d > 0) secs = d;
+  }
+  const dur = durationText(secs);
+  if (dur) parts.push(dur);
+  if (s.engine) parts.push(s.engine.split('+').map((e) => ENGINE_PRETTY[e] ?? e).join('+'));
+  return parts.join(' · ');
+}
+
+export const ISSUE_CODE_LABELS: Record<string, string> = {
+  empty_stem: 'صورت سؤال خالی',
+  option_count: 'تعداد گزینه‌ها',
+  empty_option: 'گزینه‌ی خالی',
+  missing_key: 'بدون کلید',
+  invalid_key: 'کلید نامعتبر',
+  key_mismatch: 'مغایرت کلید',
+  missing_explanation: 'بدون پاسخ تشریحی',
+  suspicious_words: 'کلمه‌ی مشکوک',
+  merged_suspect: 'ادغام احتمالی',
+  missing_subject: 'بدون درس',
+  duplicate: 'تکراری',
+  duplicate_question: 'تکراری',
+};
+
+const LETTER_KEYS: Record<string, string> = { الف: '1', ب: '2', ج: '3', د: '4' };
+
+/**
+ * Parse a typed answer-key string. Digits 1–4 (Persian/ASCII) are keys; 0, "-" and spaces
+ * skip a question (null). When الف/ب/ج/د appear, tokens are whitespace-separated instead.
+ */
+export function parseKeys(raw: string): (string | null)[] {
+  const s = toAsciiDigits(raw).trim();
+  if (!s) return [];
+  if (/الف|(^|\s)[بجد](\s|$)/.test(s)) {
+    return s.split(/\s+/).map((t) => LETTER_KEYS[t] ?? (/^[1-4]$/.test(t) ? t : null));
+  }
+  const out: (string | null)[] = [];
+  for (const ch of s) {
+    if (/[1-4]/.test(ch)) out.push(ch);
+    else if (ch === '0' || ch === '-' || ch === ' ' || ch === '_') out.push(null);
+    // other characters (commas, newlines…) are ignored
+  }
+  return out;
+}

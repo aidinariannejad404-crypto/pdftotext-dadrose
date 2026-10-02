@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode } from 'react';
-import type { Flag, Issue, Question } from '../types';
+import type { DuplicateRef, Flag, Issue, Question } from '../types';
 import type { Draft, SaveState } from '../useDraft';
 import { KEY_SOURCE_LABELS, computeMarks, cx, fa, fieldLabel, getFieldText, issueAction, issueTarget, type MarkRange } from '../util';
 import ClassificationSection from './Classification';
@@ -44,6 +44,8 @@ interface Props {
   hasExplanations: boolean;
   nextProblem: NextProblem;
   banner?: ReactNode;
+  duplicates?: DuplicateRef[];
+  onDismissDuplicates?: () => void;
 }
 
 const SAVE_LABEL: Record<SaveState, string> = {
@@ -235,7 +237,7 @@ export default function Editor(props: Props) {
   const {
     question: q, draft, saveState, activeFlagIndex, onChange, onOption, onBlurField, onSave, onApprove, onUnapprove,
     onReocr, onDelete, onAdd, onPrev, onNext, hasPrev, hasNext, onFlagClick, onFlagHover, onResolveFlag, onDropFlags, onIssueClick,
-    register, index, total, reocrBusy, hasExplanations, nextProblem, banner,
+    register, index, total, reocrBusy, hasExplanations, nextProblem, banner, duplicates = [], onDismissDuplicates,
   } = props;
   const uid = useId();
   const approved = q.status === 'approved';
@@ -281,8 +283,13 @@ export default function Editor(props: Props) {
             ({fa(index + 1)} از {fa(total)})
           </span>
           {approved && (
-            <span className="chip chip-approved">
+            <span className="chip chip-approved" data-testid="approved-chip">
               <Icon name="check" size={14} /> تأییدشده
+              {q.approved_by === 'auto' && (
+                <span className="auto-badge" title="به‌طور خودکار تأیید شده چون سالم بود؛ می‌توانید لغو کنید">
+                  خودکار
+                </span>
+              )}
             </span>
           )}
         </div>
@@ -306,6 +313,32 @@ export default function Editor(props: Props) {
               </li>
             ))}
           </ul>
+        )}
+
+        {duplicates.length > 0 && (
+          <div className="dup-box" role="status" data-testid="dup-box">
+            <div className="dup-title">
+              <Icon name="alert" size={15} /> این سؤال احتمالاً تکراری است:
+            </div>
+            <ul>
+              {duplicates.map((d) => (
+                <li key={`${d.project_id}-${d.number}`}>
+                  <a href={`#/p/${encodeURIComponent(d.project_id)}?q=${d.number}`} data-testid="dup-link">
+                    سؤال {fa(d.number)} — {d.project_title || d.project_id}
+                  </a>{' '}
+                  <span className="muted small">(شباهت {fa(Math.round(d.similarity * 100))}٪)</span>
+                </li>
+              ))}
+            </ul>
+            <div className="row-gap">
+              <button className="btn btn-xs" onClick={onDismissDuplicates} data-testid="dup-dismiss">
+                تکراری نیست
+              </button>
+              <button className="btn btn-xs btn-danger-text" onClick={onDelete}>
+                <Icon name="trash" size={14} /> حذف این سؤال
+              </button>
+            </div>
+          </div>
         )}
 
         <ClassificationSection

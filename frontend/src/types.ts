@@ -89,6 +89,23 @@ export interface Classification {
   section_path: string[];
 }
 
+export interface DuplicateRef {
+  project_id: string;
+  project_title: string;
+  number: number;
+  similarity: number; // 0..1
+}
+
+export interface ProjectStats {
+  pages: number;
+  started_at: string | null;
+  finished_at: string | null;
+  ocr_seconds: number;
+  parse_seconds: number;
+  engine: string;
+  ai_pages: number;
+}
+
 export interface Option {
   key: string;
   text: string;
@@ -111,6 +128,8 @@ export interface Question {
   issues: Issue[];
   status: 'pending' | 'approved';
   edited: boolean;
+  approved_by?: 'admin' | 'auto' | null;
+  duplicates?: DuplicateRef[];
 }
 
 export interface Progress {
@@ -144,6 +163,9 @@ export interface Project {
   questions: Question[];
   issues: Issue[];
   page_status?: Record<string, boolean>; // text mode: "<doc>:<page>" → approved
+  batch_id?: string | null;
+  auto_approve?: boolean;
+  stats?: ProjectStats;
 }
 
 export interface ProjectSummary {
@@ -157,6 +179,11 @@ export interface ProjectSummary {
   error: string | null;
   mode?: ReviewMode;
   page_count?: number;
+  batch_id?: string | null;
+  queue_position?: number | null;
+  auto_approved_count?: number;
+  duplicate_count?: number;
+  stats?: ProjectStats; // not in the backend summary yet; shown when present
   question_count: number;
   approved_count: number;
   error_count: number;
@@ -221,4 +248,26 @@ export interface SiteImportJob {
   status?: string;
   total_items?: number;
   [k: string]: unknown;
+}
+
+export interface ReviewQueueItem {
+  project_id: string;
+  project_title: string;
+  number: number;
+  level: 'error' | 'warning' | 'pending';
+  codes: string[];
+  flags: number;
+}
+
+export interface PushApprovedItem {
+  project_id: string;
+  ok: boolean;
+  questions: number;
+  detail?: string | null;
+  response?: unknown;
+}
+
+export interface QueueState {
+  running: string[];
+  queued: string[];
 }

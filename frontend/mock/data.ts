@@ -505,6 +505,11 @@ export function makeReadyProject(id: string, title: string, createdAt: string): 
     id, title, track: 'bar', year: 1403, blueprint: 'BAR-1405', doc_type: 'auto', mode: 'questions', page_status: {},
     engine: 'auto', created_at: createdAt,
     status: 'ready', progress: { stage: 'done', done: 3, total: 3 }, error: null,
+    stats: {
+      pages: 3, started_at: new Date(Date.parse(createdAt || '2026-01-01') ).toISOString(),
+      finished_at: new Date(Date.parse(createdAt || '2026-01-01') + 95_000).toISOString(),
+      ocr_seconds: 80, parse_seconds: 15, engine: 'claude+tesseract', ai_pages: 3,
+    },
     documents: [
       { kind: 'booklet', filename: 'kanoon-1403-camscanner.pdf', page_count: pageCount('booklet') },
       { kind: 'explanations', filename: 'pasokh-tashrihi-1403.pdf', page_count: pageCount('explanations') },

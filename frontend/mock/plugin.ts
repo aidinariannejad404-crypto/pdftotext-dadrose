@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import type { Plugin } from 'vite';
-import type { DocKind, Project, ProjectSummary, Question, QuestionUpdate } from '../src/types';
+import type { DocKind, Project, ProjectSummary, Question, QuestionUpdate, ReviewQueueItem } from '../src/types';
+import { parseKeys } from '../src/util';
 import {
   META, classifyQuestion, makeReadyProject, makeTextProject, notesPageText, pageResult, pageSvg, setFontData, validateQuestion, type PageSet,
 } from './data';
@@ -45,7 +46,21 @@ function seed() {
       progress: { stage: 'ocr', done: 5, total: 14 },
       _startedAt: now - 10 * 60_000, _duration: 20 * 60_000, // stays in the OCR stage
     },
-    makeReadyProject('demo', 'آزمون کانون وکلا ۱۴۰۳', new Date(now - 3600_000).toISOString()),
+    withDemoExtras(makeReadyProject('demo', 'آزمون کانون وکلا ۱۴۰۳', new Date(now - 3600_000).toISOString())),
+    {
+      ...makeReadyProject('b-1', 'کتاب تست تجارت - فصل ۱', new Date(now - 1800_000).toISOString()),
+      track: 'other', year: null, batch_id: 'batch-1',
+    },
+    {
+      ...makeReadyProject('b-2', 'کتاب تست تجارت - فصل ۲', new Date(now - 1799_000).toISOString()),
+      track: 'other', year: null, batch_id: 'batch-1', status: 'queued', questions: [], issues: [],
+      progress: { stage: 'queued', done: 0, total: 0 },
+    },
+    {
+      ...makeReadyProject('b-3', 'کتاب تست تجارت - فصل ۳', new Date(now - 1798_000).toISOString()),
+      track: 'other', year: null, batch_id: 'batch-1', status: 'queued', questions: [], issues: [],
+      progress: { stage: 'queued', done: 0, total: 0 },
+    },
     { ...makeTextProject('notes', 'بانک نکات حقوق مدنی', new Date(now - 7200_000).toISOString()), _set: 'notes', _texts: {} },
     {
       ...makeReadyProject('p-failed', 'آزمون کانون ۱۴۰۱ — اسکن ناقص', new Date(now - 86400_000).toISOString()),
@@ -56,6 +71,35 @@ function seed() {
   ];
 }
 seed();
+
+function withDemoExtras(p: MockProject): MockProject {
+  const q1 = p.questions.find((q) => q.number === 1);
+  if (q1) q1.approved_by = 'admin';
+  const q10 = p.questions.find((q) => q.number === 10);
+  if (q10) q10.approved_by = 'auto';
+  const q11 = p.questions.find((q) => q.number === 11);
+  if (q11) {
+    q11.duplicates = [{ project_id: 'b-1', project_title: 'کتاب تست تجارت - فصل ۱', number: 11, similarity: 0.97 }];
+    q11.issues = [...q11.issues, { level: 'warning', code: 'duplicate', message: 'این سؤال تکراری به نظر می‌رسد.', field: null }];
+  }
+  return p;
+}
+
+function isClean(q: Question) {
+  return q.status !== 'approved' && !q.issues.some((i) => i.level === 'error') && q.flags.length === 0 && !(q.duplicates ?? []).length;
+}
+
+function autoApprove(p: MockProject): number {
+  let n = 0;
+  for (const q of p.questions) {
+    if (isClean(q)) {
+      q.status = 'approved';
+      q.approved_by = 'auto';
+      n++;
+    }
+  }
+  return n;
+}
 
 function advance(p: MockProject) {
   if (p.status !== 'queued' && p.status !== 'processing') return;
@@ -83,11 +127,20 @@ function advance(p: MockProject) {
       ready.page_status = {};
     }
     if (p._subject) ready.questions.forEach((q) => (q.subject_key = p._subject!));
+    const wantAuto = p.auto_approve;
     Object.assign(p, {
-      ...ready, track: p.track, year: p.year, blueprint: p.blueprint, engine: p.engine,
+      ...ready, auto_approve: wantAuto, batch_id: p.batch_id, track: p.track, year: p.year, blueprint: p.blueprint, engine: p.engine,
       documents: p.doc_type === 'text' ? ready.documents : p.documents,
     });
+    if (wantAuto && p.mode !== 'text') autoApprove(p);
   }
+}
+
+function queuedIds() {
+  return projects
+    .filter((x) => x.status === 'queued')
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+    .map((x) => x.id);
 }
 
 function summary(p: MockProject): ProjectSummary {
@@ -95,6 +148,11 @@ function summary(p: MockProject): ProjectSummary {
     id: p.id, title: p.title, track: p.track, year: p.year, created_at: p.created_at, status: p.status,
     progress: p.progress, error: p.error,
     mode: p.mode ?? 'questions',
+    batch_id: p.batch_id ?? null,
+    queue_position: p.status === 'queued' ? queuedIds().indexOf(p.id) + 1 || null : null,
+    auto_approved_count: p.questions.filter((q) => q.approved_by === 'auto' && q.status === 'approved').length,
+    duplicate_count: p.questions.filter((q) => (q.duplicates ?? []).length > 0).length,
+    stats: p.stats,
     page_count: p.documents.reduce((n, d) => n + d.page_count, 0),
     question_count: p.questions.length,
     // text mode: approved pages
@@ -186,6 +244,65 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
     const list = [...projects].sort((a, b) => b.created_at.localeCompare(a.created_at)).map(summary);
     return send(res, 200, list), true;
   }
+  if (path === '/api/queue' && method === 'GET') {
+    return send(res, 200, { running: projects.filter((x) => x.status === 'processing').map((x) => x.id), queued: queuedIds() }), true;
+  }
+
+  if (path === '/api/review-queue' && method === 'GET') {
+    const limit = Number(url.searchParams.get('limit')) || 200;
+    const only = url.searchParams.get('project_id');
+    const items: ReviewQueueItem[] = [];
+    for (const pr of projects) {
+      if (pr.status !== 'ready' || pr.mode === 'text' || (only && pr.id !== only)) continue;
+      for (const q of pr.questions) {
+        if (q.status === 'approved') continue;
+        const level = q.issues.some((i) => i.level === 'error') ? 'error' : q.issues.some((i) => i.level === 'warning') || q.flags.length ? 'warning' : 'pending';
+        items.push({ project_id: pr.id, project_title: pr.title, number: q.number, level, codes: [...new Set(q.issues.map((i) => i.code))], flags: q.flags.length });
+      }
+    }
+    const rank = { error: 0, warning: 1, pending: 2 };
+    items.sort((a, b) => rank[a.level] - rank[b.level]);
+    return send(res, 200, items.slice(0, limit)), true;
+  }
+
+  if (path === '/api/push-approved' && method === 'POST') {
+    if (!pushConfigured) return send(res, 502, { detail: 'اتصال به سایت پیکربندی نشده است.' }), true;
+    const { project_ids } = await json<{ project_ids?: string[] }>(req);
+    await delay(500);
+    const list = projects.filter((x) => x.status === 'ready' && (!project_ids || project_ids.includes(x.id)));
+    return send(res, 200, list.map((x) => {
+      const n = x.questions.filter((q) => q.status === 'approved').length;
+      return n ? { project_id: x.id, ok: true, questions: n, response: { id: ++jobSeq, status: 'queued', total_items: n } } : { project_id: x.id, ok: false, questions: 0, detail: 'سؤال تأییدشده‌ای ندارد.' };
+    })), true;
+  }
+
+  if (path === '/api/projects/batch' && method === 'POST') {
+    const body = (await readBody(req)).toString('utf8');
+    const names = [...body.matchAll(/name="files"; filename="([^"]+)"/g)].map((m) => m[1]);
+    if (!names.length) return send(res, 422, { detail: 'هیچ فایلی انتخاب نشده است.' }), true;
+    const titles = [...body.matchAll(/name="titles"\r\n\r\n([\s\S]*?)\r\n--/g)].map((m) => m[1]);
+    const batchId = `batch-${Math.random().toString(36).slice(2, 7)}`;
+    const created: MockProject[] = names.map((name, i) => {
+      const id = `p-${Math.random().toString(36).slice(2, 8)}`;
+      const base = makeReadyProject(id, titles[i] || name.replace(/\.[^.]+$/, ''), new Date(Date.now() + i).toISOString());
+      return {
+        ...base,
+        track: (multipartField(body, 'track') || 'other') as Project['track'],
+        year: Number(multipartField(body, 'year')) || null,
+        blueprint: multipartField(body, 'blueprint') || 'auto',
+        doc_type: (multipartField(body, 'doc_type') || 'auto') as Project['doc_type'],
+        _subject: multipartField(body, 'default_subject') || undefined,
+        auto_approve: multipartField(body, 'auto_approve') === '1',
+        batch_id: batchId,
+        status: 'queued', progress: { stage: 'queued', done: 0, total: 0 }, questions: [], issues: [],
+        documents: base.documents.slice(0, 1),
+        _startedAt: Date.now() + i * 3000, _duration: 6000,
+      };
+    });
+    projects.push(...created);
+    return send(res, 200, { batch_id: batchId, projects: created.map(strip) }), true;
+  }
+
   if (path === '/api/projects' && method === 'POST') {
     const body = (await readBody(req)).toString('utf8');
     if (!/name="booklet"; filename="/.test(body)) return send(res, 422, { detail: 'فایل دفترچه الزامی است.' }), true;
@@ -199,6 +316,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
       blueprint: multipartField(body, 'blueprint') || 'auto',
       doc_type: (multipartField(body, 'doc_type') || 'auto') as Project['doc_type'],
       _subject: multipartField(body, 'default_subject') || undefined,
+      auto_approve: multipartField(body, 'auto_approve') === '1',
       engine: (multipartField(body, 'engine') || 'auto') as Project['engine'],
       status: 'queued', progress: { stage: 'queued', done: 0, total: 0 }, questions: [], issues: [],
       documents: /name="explanations"; filename="[^"]+"/.test(body) ? base.documents : base.documents.slice(0, 1),
@@ -349,7 +467,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
         q.correct_key = upd.correct_key;
         q.key_source = 'manual';
       }
-      if (upd.status != null) q.status = upd.status;
+      if (upd.status != null) {
+        q.status = upd.status;
+        q.approved_by = upd.status === 'approved' ? 'admin' : null;
+      }
       if (upd.flags != null) q.flags = upd.flags;
       if (upd.stem != null || upd.options != null || upd.explanation != null) q.edited = true;
       q.issues = validateQuestion(q, hasExpl(p));
@@ -406,6 +527,26 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
     const id = ++jobSeq;
     jobs.set(id, { started: Date.now(), total: n });
     return send(res, 200, { ok: true, questions: n, response: { id, status: 'queued', total_items: n } }), true;
+  }
+
+  if (rest === '/auto-approve' && method === 'POST') {
+    const n = autoApprove(p);
+    return send(res, 200, { approved: n, project: strip(p) }), true;
+  }
+
+  if (rest === '/keys' && method === 'PUT') {
+    const { keys, start } = await json<{ keys: string; start?: number }>(req);
+    const parsed = parseKeys(keys ?? '');
+    if (!parsed.some(Boolean)) return send(res, 422, { detail: 'هیچ کلیدی در متن واردشده پیدا نشد.' }), true;
+    parsed.forEach((k, i) => {
+      const q = p.questions.find((x) => x.number === (start ?? 1) + i);
+      if (q && k) {
+        q.correct_key = k;
+        q.key_source = 'manual';
+        q.issues = validateQuestion(q, hasExpl(p));
+      }
+    });
+    return send(res, 200, strip(p)), true;
   }
 
   if (rest === '/classify' && method === 'POST') {

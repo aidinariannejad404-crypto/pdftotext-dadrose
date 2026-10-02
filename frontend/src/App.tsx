@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
 import { AppDataProvider } from './appData';
 import ProjectsPage from './components/ProjectsPage';
+import QueuePage from './components/QueuePage';
 import ReviewPage from './components/ReviewPage';
 import { ToastProvider } from './components/Toasts';
 
-type Route = { name: 'projects' } | { name: 'review'; id: string };
+type Route = { name: 'projects' } | { name: 'queue' } | { name: 'review'; id: string };
 
 function parseHash(): Route {
   const m = /^#\/p\/([^/?#]+)/.exec(window.location.hash);
   if (m) return { name: 'review', id: decodeURIComponent(m[1]) };
+  if (/^#\/queue/.test(window.location.hash)) return { name: 'queue' };
   return { name: 'projects' };
 }
 
@@ -27,7 +29,7 @@ export default function App() {
   return (
     <ToastProvider>
       <AppDataProvider>
-        {route.name === 'review' ? <ReviewPage key={route.id} id={route.id} /> : <ProjectsPage />}
+        {route.name === 'review' ? <ReviewPage key={route.id} id={route.id} /> : route.name === 'queue' ? <QueuePage /> : <ProjectsPage />}
       </AppDataProvider>
     </ToastProvider>
   );

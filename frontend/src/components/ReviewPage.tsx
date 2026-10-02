@@ -5,7 +5,7 @@ import { clearPageCache } from '../pageCache';
 import type { DocKind, EngineName, Flag, Line, Project, Question, Word } from '../types';
 import { useDraft, type Draft } from '../useDraft';
 import {
-  ENGINE_LABELS, STAGE_LABELS, computeMarks, cx, etaText, fa, getFieldText, isTypingTarget, percent,
+  ENGINE_LABELS, STAGE_LABELS, computeMarks, statsText, cx, etaText, fa, getFieldText, isTypingTarget, percent,
   questionState, setFieldText, toAsciiDigits,
 } from '../util';
 import Editor, { NextProblemButton, type NextProblem } from './Editor';
@@ -20,6 +20,9 @@ import PageViewer, { type FocusTarget } from './PageViewer';
 import PushDialog from './PushDialog';
 import { ClassifyDialog, StatsDialog } from './ClassifyDialogs';
 import { StatusChip } from './ProjectsPage';
+import KeysDialog from './KeysDialog';
+import { queueHref } from './QueuePage';
+import { navigate } from '../App';
 import { useToast } from './Toasts';
 
 type MobileTab = 'list' | 'text' | 'image';
@@ -33,6 +36,8 @@ type Dialog =
   | { kind: 'mode' }
   | { kind: 'classify' }
   | { kind: 'stats' }
+  | { kind: 'keys' }
+  | { kind: 'autoapprove' }
   | null;
 
 function readQueryNumber(): number | null {
@@ -40,8 +45,8 @@ function readQueryNumber(): number | null {
   return m ? Number(m[1]) : null;
 }
 
-function writeQueryNumber(id: string, n: number) {
-  const hash = `#/p/${encodeURIComponent(id)}?q=${n}`;
+function writeQueryNumber(id: string, n: number, fromQueue = false) {
+  const hash = `#/p/${encodeURIComponent(id)}?q=${n}${fromQueue ? '&from=queue' : ''}`;
   if (window.location.hash !== hash) history.replaceState(null, '', hash);
 }
 
@@ -69,6 +74,8 @@ export default function ReviewPage({ id }: { id: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [onlyApproved, setOnlyApproved] = useState(true);
   const [doneDismissed, setDoneDismissed] = useState(false);
+  const [fromQueue] = useState(() => /[?&]from=queue/.test(window.location.hash));
+  const [dismissedDups, setDismissedDups] = useState<Set<number>>(new Set());
   const fieldRefs = useRef(new Map<string, HTMLTextAreaElement>());
   const editorPane = useRef<HTMLDivElement>(null);
   const focusNonce = useRef(0);
@@ -137,7 +144,7 @@ export default function ReviewPage({ id }: { id: string }) {
   // Switch the viewer to the question's first region when the question changes.
   useEffect(() => {
     if (!question) return;
-    writeQueryNumber(id, question.number);
+    writeQueryNumber(id, question.number, fromQueue);
     setActiveFlag(null);
     setHoverFlag(null);
     const r = question.regions.find((x) => x.doc === 'booklet') ?? question.regions[0];
@@ -208,11 +215,33 @@ export default function ReviewPage({ id }: { id: string }) {
     return { label: 'مورد دیگری نمانده', count: 0, disabled: true, tone: 'done', onClick: goNextProblem };
   }, [questions, current, goNextProblem]);
 
+  /** Review-queue flow: go to the next item of the cross-project queue (may be another project). */
+  const nextInQueue = useCallback(async () => {
+    try {
+      const items = await api.reviewQueue();
+      const next = items.find((it) => !(it.project_id === id && it.number === current));
+      if (!next) {
+        toast.success('صف بازبینی خالی شد.');
+        navigate('#/queue');
+      } else if (next.project_id === id) {
+        setCurrent(next.number);
+      } else {
+        navigate(queueHref(next));
+      }
+    } catch (err) {
+      toast.error(err);
+    }
+  }, [id, current, toast]);
+
   const approve = useCallback(async () => {
     if (!question) return;
     const wasApproved = question.status === 'approved';
     const ok = wasApproved ? await flush() : await saveWith({ status: 'approved' });
     if (!ok) return;
+    if (fromQueue) {
+      await nextInQueue();
+      return;
+    }
     const after = [...questions.slice(idx + 1), ...questions.slice(0, idx)];
     const next = after.find((q) => q.status !== 'approved' && q.number !== question.number);
     if (next) setCurrent(next.number);
@@ -220,7 +249,7 @@ export default function ReviewPage({ id }: { id: string }) {
       setDoneDismissed(false);
       toast.success('همه‌ی سؤال‌ها تأیید شدند.');
     } else if (questions[idx + 1]) setCurrent(questions[idx + 1].number);
-  }, [question, questions, idx, flush, saveWith, toast]);
+  }, [question, questions, idx, flush, saveWith, toast, fromQueue, nextInQueue]);
 
   const unapprove = useCallback(async () => {
     await saveWith({ status: 'pending' });
@@ -432,6 +461,19 @@ export default function ReviewPage({ id }: { id: string }) {
     }
   };
 
+  const doAutoApprove = async () => {
+    setDialog(null);
+    await flush();
+    try {
+      const r = await api.autoApprove(id);
+      setProject(r.project);
+      setVersion((v) => v + 1);
+      toast.success(`${fa(r.approved)} سؤال سالم خودکار تأیید شد.`);
+    } catch (err) {
+      toast.error(err);
+    }
+  };
+
   const doDelete = async () => {
     if (!question) return;
     setDialog(null);
@@ -490,6 +532,10 @@ export default function ReviewPage({ id }: { id: string }) {
   const wordUrl = exportUrl(id, onlyApproved, 'docx');
   const wordFile = `dadrose-${id}.docx`;
   const pct = percent(approvedCount, total);
+  const cleanCount = questions.filter(
+    (q) => q.status !== 'approved' && !q.issues.some((i) => i.level === 'error') && q.flags.length === 0 && !(q.duplicates ?? []).length,
+  ).length;
+  const missingKeys = questions.filter((q) => !q.correct_key).length;
 
   const wordButton = (big = false) =>
     exportCount === 0 ? (
@@ -552,9 +598,20 @@ export default function ReviewPage({ id }: { id: string }) {
             <span className="small">
               <b data-testid="count-approved">{fa(approvedCount)}</b> از <span data-testid="count-total">{fa(total)}</span> سؤال تأیید شد
               {counts.errors > 0 && <span className="text-danger"> · {fa(counts.errors)} خطا</span>}
+              {project.stats && statsText(project.stats) && <span className="review-stats"> · {statsText(project.stats)}</span>}
             </span>
           </div>
         </div>
+        {fromQueue && (
+          <div className="queue-nav" data-testid="queue-nav">
+            <a className="btn btn-sm btn-ghost" href="#/queue">
+              <Icon name="list" size={16} /> بازگشت به صف
+            </a>
+            <button className="btn btn-sm" onClick={() => void flush().then(nextInQueue)} data-testid="queue-next">
+              بعدی در صف <Icon name="chev-left" size={16} />
+            </button>
+          </div>
+        )}
         <button
           className="btn btn-sm btn-ghost btn-icon show-mobile"
           onClick={() => setDialog({ kind: 'help' })}
@@ -568,6 +625,16 @@ export default function ReviewPage({ id }: { id: string }) {
             <input type="checkbox" checked={onlyApproved} onChange={(e) => setOnlyApproved(e.target.checked)} />
             <span>فقط تأییدشده‌ها</span>
           </label>
+          {cleanCount > 0 && (
+            <button
+              className="btn btn-sm"
+              onClick={() => setDialog({ kind: 'autoapprove' })}
+              title="سؤال‌های کامل، بدون خطا، بدون کلمه‌ی مشکوک و غیرتکراری"
+              data-testid="approve-clean"
+            >
+              <Icon name="check" size={16} /> تأیید همه‌ی سالم‌ها <span className="btn-count">{fa(cleanCount)} سؤال</span>
+            </button>
+          )}
           {wordButton()}
           <Menu
             label="بیشتر"
@@ -599,6 +666,16 @@ export default function ReviewPage({ id }: { id: string }) {
                   setDialog({ kind: 'classify' });
                 },
                 testId: 'menu-classify',
+              },
+              {
+                label: 'ورود سریع کلید',
+                hint: missingKeys ? `${fa(missingKeys)} سؤال بدون کلید` : 'تایپ کلید همه‌ی سؤال‌ها با هم',
+                icon: 'text',
+                onSelect: () => {
+                  void flush();
+                  setDialog({ kind: 'keys' });
+                },
+                testId: 'menu-keys',
               },
               {
                 label: 'آمار',
@@ -656,6 +733,8 @@ export default function ReviewPage({ id }: { id: string }) {
             onFilter={setFilter}
             projectIssues={project.issues}
             onAdd={() => setDialog({ kind: 'add' })}
+            missingKeys={missingKeys}
+            onKeys={() => setDialog({ kind: 'keys' })}
           />
         </div>
         <div className="pane pane-editor" ref={editorPane}>
@@ -690,6 +769,8 @@ export default function ReviewPage({ id }: { id: string }) {
               hasExplanations={hasExplanations}
               nextProblem={nextProblem}
               banner={completion}
+              duplicates={(question.duplicates ?? []).length && !dismissedDups.has(question.number) ? question.duplicates : []}
+              onDismissDuplicates={() => setDismissedDups((d) => new Set(d).add(question.number))}
             />
           ) : (
             <div className="empty muted">
@@ -805,6 +886,37 @@ export default function ReviewPage({ id }: { id: string }) {
         />
       )}
       {dialog?.kind === 'stats' && <StatsDialog questions={questions} onClose={() => setDialog(null)} />}
+      {dialog?.kind === 'keys' && (
+        <KeysDialog
+          project={project}
+          onClose={() => setDialog(null)}
+          onDone={(p) => {
+            setProject(p);
+            setVersion((v) => v + 1);
+          }}
+        />
+      )}
+      {dialog?.kind === 'autoapprove' && (
+        <Modal
+          title="تأیید همه‌ی سؤال‌های سالم"
+          onClose={() => setDialog(null)}
+          footer={
+            <>
+              <button className="btn btn-success" onClick={doAutoApprove} data-testid="confirm-auto-approve">
+                تأیید {fa(cleanCount)} سؤال
+              </button>
+              <button className="btn" onClick={() => setDialog(null)}>
+                انصراف
+              </button>
+            </>
+          }
+        >
+          <p>
+            سؤال‌هایی که کامل‌اند (صورت سؤال، ۴ گزینه و کلید)، خطا و کلمه‌ی مشکوک ندارند و تکراری نیستند، با برچسب «خودکار» تأیید
+            می‌شوند. هر زمان بخواهید می‌توانید تأیید هر سؤال را لغو کنید.
+          </p>
+        </Modal>
+      )}
     </div>
   );
 }

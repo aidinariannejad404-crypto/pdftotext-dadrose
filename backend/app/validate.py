@@ -198,6 +198,13 @@ def validate_question(q: Question, has_explanations: bool) -> list[Issue]:
         issues.append(_issue("warning", "missing_subject", "درس سؤال مشخص نیست."))
     elif not q.topic and topics_by_subject().get(q.subject_key):
         issues.append(_issue("warning", "missing_topic", "مبحث سؤال تشخیص داده نشد."))
+    if q.duplicates:
+        parts = []
+        for d in q.duplicates:
+            where = f"پروژه‌ی «{d.project_title}»" if d.project_title else "پروژه‌ی دیگر"
+            percent = to_persian_digits(round(d.similarity * 100))
+            parts.append(f"سؤال {to_persian_digits(d.number)} {where} ({percent}٪)")
+        issues.append(_issue("warning", "duplicate", "احتمالاً تکراری: " + "؛ ".join(parts)))
     unknown = sorted({r.law for r in q.articles if r.law and not r.law_key})
     if unknown:
         issues.append(
@@ -208,6 +215,34 @@ def validate_question(q: Question, has_explanations: bool) -> list[Issue]:
             )
         )
     return issues
+
+
+# Warnings that do not block auto-approval.
+CLEAN_ALLOWED_WARNINGS = frozenset({"missing_topic", "missing_subject", "article_unknown_law"})
+
+
+def is_clean(q: Question, has_explanations: bool) -> bool:
+    """The single rule for auto-approval. A question is clean when:
+
+    - the stem is non-empty;
+    - it has exactly 4 options with keys 1..4, none empty;
+    - `correct_key` is one of 1..4;
+    - it has no unresolved flags (suspicious words);
+    - re-validation yields no errors and no warnings other than missing_topic,
+      missing_subject and article_unknown_law. So duplicate, key_mismatch,
+      merged_suspect, option_count, suspicious_words block it, and so does
+      missing_explanation (only emitted when an explanations document was uploaded).
+    """
+    if not q.stem.strip() or q.flags:
+        return False
+    if sorted(o.key for o in q.options) != list(OPTION_KEYS):
+        return False
+    if any(not o.text.strip() for o in q.options) or q.correct_key not in OPTION_KEYS:
+        return False
+    return all(
+        i.level == "warning" and i.code in CLEAN_ALLOWED_WARNINGS
+        for i in validate_question(q, has_explanations)
+    )
 
 
 def validate_project(

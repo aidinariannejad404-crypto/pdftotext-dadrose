@@ -22,9 +22,11 @@ interface Props {
   onFilter: (f: NavFilter) => void;
   projectIssues: Issue[];
   onAdd: () => void;
+  missingKeys?: number;
+  onKeys?: () => void;
 }
 
-export default function Navigator({ questions, current, onSelect, filter, onFilter, projectIssues, onAdd }: Props) {
+export default function Navigator({ questions, current, onSelect, filter, onFilter, projectIssues, onAdd, missingKeys = 0, onKeys }: Props) {
   const { meta, subjectName } = useAppData();
   const approved = questions.filter((q) => q.status === 'approved').length;
   const pct = percent(approved, questions.length);
@@ -139,6 +141,15 @@ export default function Navigator({ questions, current, onSelect, filter, onFilt
         </ul>
       )}
 
+      {missingKeys >= 3 && onKeys && (
+        <div className="keys-hint small" data-testid="keys-hint">
+          {fa(missingKeys)} سؤال کلید ندارند.{' '}
+          <button className="link" onClick={onKeys}>
+            ورود سریع کلید
+          </button>
+        </div>
+      )}
+
       <div className="segmented" role="radiogroup" aria-label="فیلتر سؤال‌ها">
         {(
           [
@@ -204,11 +215,11 @@ export default function Navigator({ questions, current, onSelect, filter, onFilt
                 return (
                   <button
                     key={q.number}
-                    className={cx('qchip', `qchip-${s}`, q.number === current && 'is-current')}
+                    className={cx('qchip', `qchip-${s}`, q.number === current && 'is-current', q.status === 'approved' && q.approved_by === 'auto' && 'is-auto', (q.duplicates ?? []).length > 0 && 'is-dup')}
                     onClick={() => onSelect(q.number)}
                     aria-current={q.number === current ? 'true' : undefined}
-                    aria-label={`سؤال ${fa(q.number)} — ${STATE_LABEL[s]}`}
-                    title={STATE_LABEL[s]}
+                    aria-label={`سؤال ${fa(q.number)} — ${STATE_LABEL[s]}${q.approved_by === 'auto' && s === 'approved' ? ' (خودکار)' : ''}`}
+                    title={`${STATE_LABEL[s]}${q.approved_by === 'auto' && s === 'approved' ? ' (خودکار)' : ''}${(q.duplicates ?? []).length ? ' · تکراری' : ''}`}
                     data-testid={`qchip-${q.number}`}
                     data-state={s}
                   >

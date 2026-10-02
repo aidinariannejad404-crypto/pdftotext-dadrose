@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from 'react';
-import { createProject } from '../api';
+import { createBatch, createProject } from '../api';
 import { useAppData } from '../appData';
 import type { Blueprint, DocType, EngineName, Track } from '../types';
 import { navigate } from '../App';
@@ -17,7 +17,10 @@ interface Picked {
   file: File;
   url: string | null; // object URL for image thumbnails
   pages: number | null; // images = 1, PDFs = counted if cheap
+  title?: string; // batch mode: project title (defaults to the file name)
 }
+
+const baseName = (f: File) => f.name.replace(/\.[a-z0-9]+$/i, '');
 
 let seq = 0;
 
@@ -66,7 +69,7 @@ export function pickBlueprint(blueprints: Blueprint[], track: Track, year: numbe
 }
 
 function FileZone({
-  label, hint, required, files, onChange, testId,
+  label, hint, required, files, onChange, testId, batch,
 }: {
   label: string;
   hint: string;
@@ -74,6 +77,7 @@ function FileZone({
   files: Picked[];
   onChange: (f: Picked[]) => void;
   testId: string;
+  batch?: boolean;
 }) {
   const [over, setOver] = useState(false);
   const toast = useToast();
@@ -169,15 +173,26 @@ function FileZone({
                   </span>
                 )}
                 <span className="file-info">
-                  <span className="file-name" dir="auto" title={p.file.name}>
-                    {p.file.name}
-                  </span>
+                  {batch ? (
+                    <input
+                      className="input input-sm file-title"
+                      value={p.title ?? baseName(p.file)}
+                      onChange={(e) => onChange(files.map((x) => (x.id === p.id ? { ...x, title: e.target.value } : x)))}
+                      aria-label={`عنوان پروژه برای ${p.file.name}`}
+                      title={p.file.name}
+                      data-testid="batch-title"
+                    />
+                  ) : (
+                    <span className="file-name" dir="auto" title={p.file.name}>
+                      {p.file.name}
+                    </span>
+                  )}
                   <span className="muted small">
                     {mb(p.file.size)}
                     {p.pages ? ` · ${fa(p.pages)} صفحه` : isPdf(p.file) ? ' · PDF' : ''}
                   </span>
                 </span>
-                {files.length > 1 && (
+                {files.length > 1 && !batch && (
                   <span className="file-move">
                     <button type="button" className="btn btn-xs btn-icon" onClick={() => move(i, -1)} disabled={i === 0} aria-label={`انتقال ${p.file.name} به بالا`} title="جابه‌جایی به بالا (صفحه‌ی قبل)">
                       <Icon name="chev-up" size={16} />
@@ -196,7 +211,7 @@ function FileZone({
           <div className="small muted file-summary">
             {fa(files.length)} فایل
             {totalPages ? ` · حدود ${fa(totalPages)} صفحه` : ''}
-            {files.length > 1 && ' · ترتیب فایل‌ها = ترتیب صفحه‌ها'}
+            {files.length > 1 && (batch ? ' · هر فایل یک پروژه‌ی جدا' : ' · ترتیب فایل‌ها = ترتیب صفحه‌ها')}
           </div>
         </>
       )}
@@ -204,7 +219,7 @@ function FileZone({
   );
 }
 
-export default function UploadCard({ onCreated }: { onCreated: () => void }) {
+export default function UploadCard({ onCreated }: { onCreated: (batchId?: string) => void }) {
   const { meta, health, engineAvailable } = useAppData();
   const toast = useToast();
   const [kind, setKind] = useState<Kind>('auto');
@@ -219,6 +234,8 @@ export default function UploadCard({ onCreated }: { onCreated: () => void }) {
   const [engine, setEngine] = useState<EngineName>('auto');
   const [uploading, setUploading] = useState<number | null>(null);
   const [tried, setTried] = useState(false);
+  const [batch, setBatch] = useState(false);
+  const [autoApproveSet, setAutoApproveSet] = useState<boolean | null>(null);
 
   const thisYear = useMemo(currentPersianYear, []);
   const yearNum = Number(toAsciiDigits(year).trim());
@@ -246,6 +263,7 @@ export default function UploadCard({ onCreated }: { onCreated: () => void }) {
       : `آزمون ${TRACK_LABELS[track]} ${fa(yearNum)}`
     : firstName;
   const shownTitle = titleTouched ? title : autoTitle;
+  const autoApprove = !isText && (autoApproveSet ?? true);
 
   useEffect(() => {
     if (!engineAvailable(engine)) setEngine('auto');
@@ -256,8 +274,9 @@ export default function UploadCard({ onCreated }: { onCreated: () => void }) {
   if (!booklet.length) missing.push(isText ? 'فایل را انتخاب کنید' : 'فایل دفترچه را انتخاب کنید');
   if (showExam && year && !yearValid) missing.push('سال را درست وارد کنید (مثلاً ۱۴۰۴)');
   else if (needsExam && !yearValid) missing.push('سال آزمون را وارد کنید');
-  if (!showExam && booklet.length && !(shownTitle || autoTitle).trim()) missing.push('عنوان را وارد کنید');
-  if (totalBytes > MAX_TOTAL_BYTES) missing.push('حجم فایل‌ها بیش از ۲۰۰ مگابایت است');
+  if (!batch && !showExam && booklet.length && !(shownTitle || autoTitle).trim()) missing.push('عنوان را وارد کنید');
+  if (!batch && totalBytes > MAX_TOTAL_BYTES) missing.push('حجم فایل‌ها بیش از ۲۰۰ مگابایت است');
+  if (batch && booklet.some((p) => p.file.size > MAX_TOTAL_BYTES)) missing.push('حجم یکی از فایل‌ها بیش از ۲۰۰ مگابایت است');
   const canSubmit = missing.length === 0 && uploading === null;
 
   const reset = () => {
@@ -277,10 +296,16 @@ export default function UploadCard({ onCreated }: { onCreated: () => void }) {
     setTried(true);
     if (!canSubmit) return;
     const form = new FormData();
-    booklet.forEach((p) => form.append('booklet', p.file, p.file.name));
-    if (showExam) explanations.forEach((p) => form.append('explanations', p.file, p.file.name));
+    if (batch) {
+      booklet.forEach((p) => {
+        form.append('files', p.file, p.file.name);
+        form.append('titles', (p.title ?? baseName(p.file)).trim() || baseName(p.file));
+      });
+    } else booklet.forEach((p) => form.append('booklet', p.file, p.file.name));
+    form.append('auto_approve', autoApprove ? '1' : '0');
+    if (showExam && !batch) explanations.forEach((p) => form.append('explanations', p.file, p.file.name));
     form.append('doc_type', docType);
-    form.append('title', (shownTitle || autoTitle || booklet[0].file.name).trim());
+    if (!batch) form.append('title', (shownTitle || autoTitle || booklet[0].file.name).trim());
     form.append('track', showExam ? track : 'other');
     if (showExam && yearValid) form.append('year', String(yearNum));
     form.append('blueprint', showExam ? blueprint : 'auto');
@@ -288,6 +313,13 @@ export default function UploadCard({ onCreated }: { onCreated: () => void }) {
     form.append('engine', engine);
     setUploading(0);
     try {
+      if (batch) {
+        const r = await createBatch(form, setUploading);
+        toast.success(`${fa(r.projects.length)} پروژه ساخته شد و در صف پردازش قرار گرفت.`);
+        reset();
+        onCreated(r.batch_id);
+        return;
+      }
       const created = await createProject(form, setUploading);
       toast.success('فایل‌ها بارگذاری شد و پردازش شروع شد.');
       reset();
@@ -349,7 +381,21 @@ export default function UploadCard({ onCreated }: { onCreated: () => void }) {
         </div>
       </fieldset>
 
-      <div className={cx('dropzones', !showExam && 'is-single')}>
+      <div className="batch-toggle">
+        <div className="segmented" role="radiogroup" aria-label="نحوه‌ی بارگذاری چند فایل">
+          <button type="button" role="radio" aria-checked={!batch} className={cx('seg', !batch && 'is-on')} onClick={() => setBatch(false)} data-testid="mode-single">
+            همه‌ی فایل‌ها یک سند
+          </button>
+          <button type="button" role="radio" aria-checked={batch} className={cx('seg', batch && 'is-on')} onClick={() => setBatch(true)} data-testid="mode-batch">
+            بارگذاری گروهی: هر فایل یک پروژه‌ی جدا
+          </button>
+        </div>
+        <span className="muted small">
+          {batch ? 'برای چند کتاب یا دفترچه‌ی جدا؛ همه با تنظیمات زیر و به نوبت پردازش می‌شوند.' : 'برای صفحه‌های یک دفترچه (مثلاً چند عکس از یک آزمون).'}
+        </span>
+      </div>
+
+      <div className={cx('dropzones', (!showExam || batch) && 'is-single')}>
         <FileZone
           label={isText ? 'فایل‌ها (کتاب، جزوه، بانک نکات)' : kind === 'testbook' ? 'فایل‌های کتاب تست' : 'دفترچه‌ی سؤالات'}
           hint="PDF یا عکس (JPG، PNG، HEIC آیفون) — اسکن CamScanner هم قبول است. چند عکس را به ترتیب صفحه انتخاب کنید. حداکثر ۲۰۰ مگابایت."
@@ -357,8 +403,9 @@ export default function UploadCard({ onCreated }: { onCreated: () => void }) {
           files={booklet}
           onChange={setBooklet}
           testId="drop-booklet"
+          batch={batch}
         />
-        {showExam && (
+        {showExam && !batch && (
           <FileZone
             label="پاسخ تشریحی"
             hint="فقط اگر پاسخ‌ها در فایل جداگانه‌اند. PDF یا عکس."
@@ -445,6 +492,18 @@ export default function UploadCard({ onCreated }: { onCreated: () => void }) {
             </select>
           </label>
         )}
+        {!isText && (
+          <label
+            className="toggle field-wide auto-approve"
+            title="سؤال‌هایی که کامل‌اند (صورت سؤال، ۴ گزینه و کلید)، خطا و کلمه‌ی مشکوک ندارند و تکراری نیستند، خودکار تأیید می‌شوند. بقیه برای بازبینی شما می‌مانند."
+          >
+            <input type="checkbox" checked={autoApprove} onChange={(e) => setAutoApproveSet(e.target.checked)} data-testid="auto-approve" />
+            <span>
+              تأیید خودکار سؤال‌های سالم <span className="muted small">(کامل، بدون خطا، بدون کلمه‌ی مشکوک و غیرتکراری)</span>
+            </span>
+          </label>
+        )}
+        {!batch && (
         <label className="field field-wide">
           <span className="field-label">عنوان پروژه {!showExam && <span className="req">(الزامی)</span>}</span>
           <input
@@ -459,6 +518,7 @@ export default function UploadCard({ onCreated }: { onCreated: () => void }) {
           />
           {!titleTouched && autoTitle && <span className="field-hint">عنوان خودکار ساخته شد؛ در صورت نیاز تغییر دهید.</span>}
         </label>
+        )}
       </div>
 
       <details className="advanced">
