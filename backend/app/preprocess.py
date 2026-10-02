@@ -230,7 +230,7 @@ def remove_shadow(gray: np.ndarray) -> tuple[np.ndarray, bool]:
 def stretch_contrast(gray: np.ndarray) -> tuple[np.ndarray, bool]:
     """Percentile stretch: ink → near black, paper → white. Keeps gray levels."""
     lo, hi = np.percentile(gray, (0.5, 99.0))
-    if hi - lo < 1:
+    if hi - lo < 50:  # (near-)blank page: stretching would only amplify paper noise
         return gray, False
     if lo < 25 and hi > 235:
         return gray, False
