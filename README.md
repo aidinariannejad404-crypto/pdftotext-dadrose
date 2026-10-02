@@ -49,7 +49,7 @@
 ۲. یک ترمینال PowerShell جدید باز کنید:
 
 ```powershell
-git clone -b claude/pdf-to-text-api-4r916f https://github.com/aidinariannejad404-crypto/pdftotext-dadrose.git
+git clone https://github.com/aidinariannejad404-crypto/pdftotext-dadrose.git
 cd pdftotext-dadrose
 powershell -ExecutionPolicy Bypass -File scripts\start-windows.ps1
 ```
