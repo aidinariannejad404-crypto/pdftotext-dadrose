@@ -32,6 +32,22 @@ export const META: Meta = {
     { key: 'fiqh_center', name: 'متون فقه مرکز وکلا' },
     { key: 'registration_law', name: 'حقوق ثبت مرکز وکلا' },
   ],
+  topics: {
+    civil: ['اموال و مالکیت', 'شرایط اساسی صحت معامله', 'خیارات', 'عقد بیع', 'عقد اجاره'],
+    civil_procedure: ['صلاحیت دادگاه‌ها', 'تجدیدنظر', 'دادرسی فوری'],
+    commercial: ['تاجر و اعمال تجارتی', 'اسناد تجاری', 'شرکت‌های تجاری'],
+    criminal: ['شروع به جرم', 'علل موجهه‌ی جرم', 'مجازات‌ها'],
+    criminal_procedure: ['قرارهای تأمین', 'تحقیقات مقدماتی'],
+    constitutional: ['حقوق ملت', 'قوه‌ی قضاییه'],
+  },
+  laws: [
+    { key: 'civil_code', name: 'قانون مدنی', subject_key: 'civil' },
+    { key: 'civil_procedure_code', name: 'قانون آیین دادرسی مدنی', subject_key: 'civil_procedure' },
+    { key: 'commercial_code', name: 'قانون تجارت', subject_key: 'commercial' },
+    { key: 'penal_code', name: 'قانون مجازات اسلامی', subject_key: 'criminal' },
+    { key: 'criminal_procedure_code', name: 'قانون آیین دادرسی کیفری', subject_key: 'criminal_procedure' },
+    { key: 'constitution', name: 'قانون اساسی', subject_key: 'constitutional' },
+  ],
 };
 
 interface SeedFlag {
@@ -464,6 +480,7 @@ export function seedQuestions(): Question[] {
       correct_key: s.key,
       key_source: s.number === 9 ? 'inline' : s.keySource,
       source_ref: s.number === 3 ? 'ارشد سراسری-۷۸' : s.number === 9 ? 'وکالت ۱۴۰۰' : '',
+      ...seedClassification(s.number),
       explanation: s.explanation,
       regions: (regionsByQ.get(s.number) ?? []).map((r) => ({ doc: r.doc, page: r.page, bbox: norm(r.px) })),
       flags: structuredClone(flagsByQ.get(s.number) ?? []),
@@ -495,4 +512,60 @@ export function makeReadyProject(id: string, title: string, createdAt: string): 
     questions: seedQuestions(),
     issues: seedProjectIssues(),
   };
+}
+
+// ---------------------------------------------------------- classification
+
+type Art = NonNullable<Question['articles']>[number];
+const art = (law_key: string, law: string, number: string, source: Art['source'], kind: Art['kind'] = 'ماده', clause = ''): Art => ({
+  law_key, law, kind, number, clause, source, field: 'explanation',
+});
+
+function seedClassification(n: number): Pick<Question, 'topic' | 'articles' | 'classification'> {
+  const c = (topic: string, ts: Art['source'] | null, conf: number | null, articles: Art[], path: string[] = []) => ({
+    topic,
+    articles,
+    classification: { subject_source: 'blueprint' as const, subject_confidence: 0.9, topic_source: ts, topic_confidence: conf, section_path: path },
+  });
+  switch (n) {
+    case 1: return c('عقد بیع', 'rules', 0.8, [art('civil_code', 'قانون مدنی', '۳۶۱', 'text')], ['جلد دوم', 'فصل اول: بیع']);
+    case 2: return c('عقد اجاره', 'heading', 0.95, [art('civil_code', 'قانون مدنی', '۴۷۴', 'text')], ['جلد دوم', 'فصل چهارم: اجاره']);
+    case 3: return c('خیارات', 'ai', 0.55, [art('civil_code', 'قانون مدنی', '۴۰۲', 'text')]);
+    case 4: return c('صلاحیت دادگاه‌ها', 'rules', 0.7, [art('civil_procedure_code', 'قانون آیین دادرسی مدنی', '۱۲', 'text')]);
+    case 5: return c('', null, null, [art('civil_procedure_code', 'قانون آیین دادرسی مدنی', '۳۳۶', 'text')]);
+    case 6: return c('شروع به جرم', 'manual', 1, [art('penal_code', 'قانون مجازات اسلامی', '۱۲۲', 'text')]);
+    case 7: return c('', null, null, []);
+    case 9: return c('قرارهای تأمین', 'rules', 0.65, [art('criminal_procedure_code', 'قانون آیین دادرسی کیفری', '۲۴۰', 'text')]);
+    case 10: return c('اسناد تجاری', 'heading', 0.9, [art('commercial_code', 'قانون تجارت', '۲۲۳', 'rules')]);
+    default: return c('', null, null, []);
+  }
+}
+
+const KEYWORDS: { re: RegExp; subject: string; topic: string; article?: Art }[] = [
+  { re: /سهامی|شرکت/, subject: 'commercial', topic: 'شرکت‌های تجاری' },
+  { re: /علل موجهه|دفاع مشروع/, subject: 'criminal', topic: 'علل موجهه‌ی جرم', article: art('penal_code', 'قانون مجازات اسلامی', '۱۵۶', 'rules') },
+  { re: /تجدیدنظر/, subject: 'civil_procedure', topic: 'تجدیدنظر' },
+  { re: /اجاره|مستأجر|مستاجر/, subject: 'civil', topic: 'عقد اجاره' },
+  { re: /بیع|مبیع/, subject: 'civil', topic: 'عقد بیع' },
+];
+
+/** Tiny offline classifier for the mock: never overwrites manual fields. */
+export function classifyQuestion(q: Question): void {
+  const text = `${q.stem} ${q.options.map((o) => o.text).join(' ')} ${q.explanation}`;
+  const hit = KEYWORDS.find((k) => k.re.test(text));
+  q.classification = q.classification ?? { subject_source: null, subject_confidence: null, topic_source: null, topic_confidence: null, section_path: [] };
+  if (!hit) return;
+  if (q.classification.subject_source !== 'manual' && !q.subject_key) {
+    q.subject_key = hit.subject;
+    q.classification.subject_source = 'rules';
+    q.classification.subject_confidence = 0.7;
+  }
+  if (q.classification.topic_source !== 'manual' && !(q.topic ?? '').trim()) {
+    q.topic = hit.topic;
+    q.classification.topic_source = 'rules';
+    q.classification.topic_confidence = 0.7;
+  }
+  if (hit.article && !(q.articles ?? []).some((a) => a.number === hit.article!.number && a.law_key === hit.article!.law_key)) {
+    q.articles = [...(q.articles ?? []), hit.article];
+  }
 }

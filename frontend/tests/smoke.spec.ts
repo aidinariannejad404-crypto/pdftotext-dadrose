@@ -355,3 +355,94 @@ test('many suspicious words stay compact: stem and options remain above the fold
   await page.getByTestId('flags-drop-stale').click();
   await expect(page.getByTestId('flags-drop-stale')).toHaveCount(0);
 });
+
+test('classification: topic with suggestions becomes manual', async ({ page }) => {
+  await page.goto('/#/p/demo?q=7');
+  const topic = page.locator('input[data-field="topic"]');
+  await expect(topic).toHaveValue('');
+  const listId = await topic.getAttribute('list');
+  await expect(page.locator(`datalist[id="${listId}"] option[value="علل موجهه‌ی جرم"]`)).toHaveCount(1);
+  await topic.fill('علل موجهه‌ی جرم');
+  await topic.blur();
+  await expect(page.getByTestId('save-state')).toHaveText(/ذخیره شد/, { timeout: 5000 });
+  await expect(page.locator('.classify-topic').getByTestId('src-badge')).toHaveText('دستی');
+  const p = await (await page.request.get('/api/projects/demo')).json();
+  const q7 = p.questions.find((q: { number: number }) => q.number === 7);
+  expect(q7.topic).toBe('علل موجهه‌ی جرم');
+  expect(q7.classification.topic_source).toBe('manual');
+});
+
+test('classification: add and remove law articles', async ({ page }) => {
+  await page.goto('/#/p/demo?q=7');
+  await expect(page.getByTestId('article-chip')).toHaveCount(0);
+  await page.getByTestId('article-add').click();
+  await expect(page.getByTestId('article-law')).toHaveValue('penal_code'); // subject's law preselected
+  await page.getByTestId('article-number').fill('۱۵۶');
+  await page.getByTestId('article-save').click();
+  await expect(page.getByTestId('article-chip')).toHaveText(/ماده ۱۵۶ · قانون مجازات اسلامی/);
+  await expect(page.getByTestId('save-state')).toHaveText(/ذخیره شد/, { timeout: 5000 });
+  let p = await (await page.request.get('/api/projects/demo')).json();
+  expect(p.questions.find((q: { number: number }) => q.number === 7).articles[0]).toMatchObject({
+    law_key: 'penal_code', number: '۱۵۶', kind: 'ماده', source: 'manual',
+  });
+  // constitution → «اصل»
+  await page.getByTestId('article-add').click();
+  await page.getByTestId('article-law').selectOption('constitution');
+  await page.getByTestId('article-number').fill('36');
+  await page.getByTestId('article-save').click();
+  await expect(page.getByTestId('article-chip').nth(1)).toHaveText(/اصل ۳۶ · قانون اساسی/);
+  // remove the first
+  await page.getByRole('button', { name: /حذف ماده ۱۵۶/ }).click();
+  await expect(page.getByTestId('article-chip')).toHaveCount(1);
+  await expect(page.getByTestId('save-state')).toHaveText(/ذخیره شد/, { timeout: 5000 });
+  p = await (await page.request.get('/api/projects/demo')).json();
+  expect(p.questions.find((q: { number: number }) => q.number === 7).articles).toHaveLength(1);
+});
+
+test('navigator: group by topic / article and search by article number', async ({ page }) => {
+  await page.goto('/#/p/demo?q=2');
+  await page.getByTestId('group-topic').click();
+  const titles = page.locator('.nav-group-title');
+  await expect(titles.filter({ hasText: 'عقد اجاره' })).toHaveCount(1);
+  await expect(titles.last()).toContainText('بدون مبحث');
+  await page.getByTestId('group-article').click();
+  await expect(titles.filter({ hasText: 'ماده ۴۷۴ · قانون مدنی' })).toHaveCount(1);
+  await page.getByTestId('nav-search').fill('۴۷۴');
+  await expect(page.locator('.qchip')).toHaveCount(1);
+  await expect(page.getByTestId('qchip-2')).toBeVisible();
+  await page.getByTestId('nav-search').fill('سهامی');
+  await expect(page.getByTestId('qchip-11')).toBeVisible();
+});
+
+test('auto-classify dialog fills missing topics and keeps manual ones; stats', async ({ page }) => {
+  await page.goto('/#/p/demo?q=1');
+  await page.getByTestId('more-menu').click();
+  await page.getByTestId('menu-classify').click();
+  await expect(page.getByRole('dialog')).toContainText('دست نمی‌خورند');
+  await expect(page.getByRole('radio', { name: /Gemini/ })).toBeDisabled();
+  await page.getByTestId('scope-missing').check();
+  await page.getByTestId('confirm-classify').click();
+  await expect(page.getByText(/طبقه‌بندی انجام شد/)).toBeVisible();
+  const p = await (await page.request.get('/api/projects/demo')).json();
+  const byN = (n: number) => p.questions.find((q: { number: number }) => q.number === n);
+  expect(byN(7).topic).toBe('علل موجهه‌ی جرم');
+  expect(byN(6).topic).toBe('شروع به جرم'); // manual, untouched
+  await page.getByTestId('more-menu').click();
+  await page.getByTestId('menu-stats').click();
+  await expect(page.getByTestId('stats')).toContainText('مباحث پرتکرار');
+  await expect(page.getByTestId('stats')).toContainText('ماده ۴۷۴ · قانون مدنی');
+});
+
+test('direct push: connection test and site job status', async ({ page }) => {
+  await page.request.post('/api/__mock/push-config', { data: { on: true } });
+  await page.goto('/#/p/demo');
+  await page.getByTestId('more-menu').click();
+  await expect(page.getByTestId('menu-push')).not.toHaveAttribute('aria-disabled', 'true');
+  await page.getByTestId('menu-push').click();
+  await page.getByTestId('push-check').click();
+  await expect(page.getByTestId('push-check-result')).toContainText('اتصال به سایت برقرار است');
+  await page.getByTestId('push-send').click();
+  await expect(page.getByTestId('push-result')).toContainText('۲ سؤال');
+  await expect(page.getByTestId('push-result')).toContainText('در حال پردازش در سایت');
+  await expect(page.getByTestId('push-result')).toContainText('آماده‌ی بازبینی در پنل سایت', { timeout: 12_000 });
+});

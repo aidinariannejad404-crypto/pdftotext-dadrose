@@ -32,6 +32,13 @@ Playwright uses the pre-installed Chromium (`PLAYWRIGHT_BROWSERS_PATH`); `@playw
 - **text** (`TextReview`): notes banks, lecture notes, books — page-by-page full-text editor (`GET/PUT /pages/{doc}/{page}/text`, autosave, «بازگردانی متن اصلی» = `text: null`), page thumbnails, «تأیید و صفحه‌ی بعد», «صفحه‌ی مشکوک بعدی», Word/TXT export (`export-text.docx`, `export.txt`). Suspicious words come from the page's OCR `Word.flag/alt` and are highlighted in the editor and on the image.
 - Switch with «بیشتر» → «نمایش به‌صورت متن کامل» / «تبدیل به حالت سؤال» (`POST /mode`). Upload sends `doc_type` (auto / questions / text).
 
+## Classification & site push
+
+- Editor «طبقه‌بندی»: درس, مبحث (free text + suggestions from `meta.topics[subject]`), مواد قانونی chips (law from `meta.laws`, ماده/اصل, number, بند/تبصره; edits are sent as the full `articles` list with `source: "manual"`), source badges (از متن / از سرفصل / الگوی آزمون / کلیدواژه / هوش مصنوعی / دستی / پیش‌فرض; «؟» when confidence < 0.6) and the `section_path` breadcrumb.
+- Navigator: group by درس / مبحث / ماده and a search box (text, topic, article number).
+- «بیشتر» → «طبقه‌بندی خودکار سؤال‌ها» (`POST /classify`), «آمار», «ارسال مستقیم به سایت» (push + «تست اتصال» via `/api/site/check`, then polls `/api/site/import-jobs/{id}` every 3 s). Push is disabled unless `health.push_configured`; hidden in text mode.
+- Mock: `POST /api/__mock/push-config {on}` enables push for testing.
+
 ## Real end-to-end test (against the actual backend)
 
 `tests-real/real.spec.ts` drives the real FastAPI backend (which serves `frontend/dist`). Its inputs are generated at runtime by `backend/tests/fixtures_gen.py` (typed booklet PDF + phone-scan photo), so no private files are needed.

@@ -22,6 +22,7 @@ import io
 import re
 
 from .blueprints import SUBJECTS, get_blueprint
+from .classify import format_article, primary_article
 from .models import Project, Question
 
 LETTERS = {"1": "الف", "2": "ب", "3": "ج", "4": "د"}
@@ -81,6 +82,12 @@ def build_lines(project: Project, only_approved: bool, exam_header: bool) -> lis
         # meta lines belong to the question block they appear in
         if q.subject_key:
             lines.append(f"درس: {_SUBJECT_NAMES.get(q.subject_key, q.subject_key)}")
+        if q.topic:
+            lines.append(f"مبحث: {_single_line(q.topic)}")
+        article = primary_article(q)
+        if article is not None and article.number:
+            # the site matches «ماده:» against its Article table by number + law
+            lines.append(f"ماده: {_single_line(format_article(article))}")
         lines.append(f"منبع: {source_title}")
         lines.append("")
     return lines

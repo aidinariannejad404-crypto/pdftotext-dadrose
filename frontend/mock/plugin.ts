@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import type { Plugin } from 'vite';
 import type { DocKind, Project, ProjectSummary, Question, QuestionUpdate } from '../src/types';
 import {
-  META, makeReadyProject, makeTextProject, notesPageText, pageResult, pageSvg, setFontData, validateQuestion, type PageSet,
+  META, classifyQuestion, makeReadyProject, makeTextProject, notesPageText, pageResult, pageSvg, setFontData, validateQuestion, type PageSet,
 } from './data';
 
 interface MockProject extends Project {
@@ -32,6 +32,9 @@ function pageText(p: MockProject, doc: DocKind, page: number) {
 }
 
 let projects: MockProject[] = [];
+let pushConfigured = false;
+const jobs = new Map<number, { started: number; total: number }>();
+let jobSeq = 100;
 
 function seed() {
   const now = Date.now();
@@ -154,12 +157,27 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
   await delay(120); // feel a little like a network
   projects.forEach(advance);
 
+  if (path === '/api/__mock/push-config' && method === 'POST') {
+    pushConfigured = !!(await json<{ on: boolean }>(req)).on;
+    return send(res, 200, { ok: true, push_configured: pushConfigured }), true;
+  }
+  if (path === '/api/site/check') {
+    return (pushConfigured ? send(res, 200, { ok: true }) : send(res, 502, { detail: 'اتصال به سایت پیکربندی نشده است.' })), true;
+  }
+  const jm = /^\/api\/site\/import-jobs\/(\d+)$/.exec(path);
+  if (jm) {
+    const j = jobs.get(Number(jm[1]));
+    if (!j) return notFound(res, 'کار پیدا نشد.'), true;
+    const status = Date.now() - j.started > 4000 ? 'ready' : 'processing';
+    return send(res, 200, { id: Number(jm[1]), status, total_items: j.total }), true;
+  }
   if (path === '/api/__mock/reset' && method === 'POST') {
+    pushConfigured = false;
     seed();
     return send(res, 200, { ok: true }), true;
   }
   if (path === '/api/health') {
-    return send(res, 200, { ok: true, engines: { offline: true, claude: true, gemini: false }, default_engine: 'claude', push_configured: false }), true;
+    return send(res, 200, { ok: true, engines: { offline: true, claude: true, gemini: false }, default_engine: 'claude', push_configured: pushConfigured }), true;
   }
   if (path === '/api/meta') return send(res, 200, META), true;
 
@@ -314,6 +332,17 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
       if (upd.options != null) q.options = upd.options;
       if (upd.explanation != null) q.explanation = upd.explanation;
       if (upd.source_ref != null) q.source_ref = upd.source_ref;
+      const cls = (q.classification = q.classification ?? { subject_source: null, subject_confidence: null, topic_source: null, topic_confidence: null, section_path: [] });
+      if (upd.topic != null && upd.topic !== (q.topic ?? '')) {
+        q.topic = upd.topic;
+        cls.topic_source = 'manual';
+        cls.topic_confidence = 1;
+      }
+      if (upd.subject_key != null && upd.subject_key !== q.subject_key) {
+        cls.subject_source = 'manual';
+        cls.subject_confidence = 1;
+      }
+      if (upd.articles != null) q.articles = upd.articles;
       if (upd.subject_key !== undefined && upd.subject_key !== null) q.subject_key = upd.subject_key;
       if (upd.correct_key != null && upd.correct_key !== q.correct_key) {
         q.correct_key = upd.correct_key;
@@ -369,7 +398,21 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolea
   }
 
   if (rest === '/push' && method === 'POST') {
-    return send(res, 400, { detail: 'اتصال به سایت پیکربندی نشده است (DADROSE_API_URL / DADROSE_API_TOKEN).' }), true;
+    if (!pushConfigured) return send(res, 502, { detail: 'اتصال به سایت پیکربندی نشده است (DADROSE_API_URL / DADROSE_API_TOKEN).' }), true;
+    const { only_approved } = await json<{ only_approved: boolean }>(req);
+    await delay(500);
+    const n = p.questions.filter((q) => !only_approved || q.status === 'approved').length;
+    const id = ++jobSeq;
+    jobs.set(id, { started: Date.now(), total: n });
+    return send(res, 200, { ok: true, questions: n, response: { id, status: 'processing', total_items: n } }), true;
+  }
+
+  if (rest === '/classify' && method === 'POST') {
+    const { engine, numbers } = await json<{ engine: string; numbers?: number[] }>(req);
+    if (engine === 'gemini') return send(res, 400, { detail: 'موتور Gemini پیکربندی نشده است.' }), true;
+    await delay(600);
+    for (const q of p.questions) if (!numbers || numbers.includes(q.number)) classifyQuestion(q);
+    return send(res, 200, strip(p)), true;
   }
   return send(res, 405, { detail: 'متد پشتیبانی نمی‌شود.' }), true;
 }

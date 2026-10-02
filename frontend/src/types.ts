@@ -212,5 +212,13 @@ export type ClassifyEngine = 'rules' | 'auto' | 'claude' | 'gemini';
 
 export interface PushResult {
   ok: boolean;
-  response: unknown;
+  questions?: number;
+  response: unknown; // site ImportJob JSON (id, status, total_items, …)
+}
+
+export interface SiteImportJob {
+  id?: string | number;
+  status?: string;
+  total_items?: number;
+  [k: string]: unknown;
 }

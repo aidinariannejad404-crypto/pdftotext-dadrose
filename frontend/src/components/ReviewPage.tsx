@@ -17,6 +17,8 @@ import TextReview from './TextReview';
 import Modal from './Modal';
 import Navigator, { type NavFilter } from './Navigator';
 import PageViewer, { type FocusTarget } from './PageViewer';
+import PushDialog from './PushDialog';
+import { ClassifyDialog, StatsDialog } from './ClassifyDialogs';
 import { StatusChip } from './ProjectsPage';
 import { useToast } from './Toasts';
 
@@ -29,6 +31,8 @@ type Dialog =
   | { kind: 'delete' }
   | { kind: 'help' }
   | { kind: 'mode' }
+  | { kind: 'classify' }
+  | { kind: 'stats' }
   | null;
 
 function readQueryNumber(): number | null {
@@ -65,7 +69,6 @@ export default function ReviewPage({ id }: { id: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [onlyApproved, setOnlyApproved] = useState(true);
   const [doneDismissed, setDoneDismissed] = useState(false);
-  const [pushResult, setPushResult] = useState<{ ok: boolean; text: string } | null>(null);
   const fieldRefs = useRef(new Map<string, HTMLTextAreaElement>());
   const editorPane = useRef<HTMLDivElement>(null);
   const focusNonce = useRef(0);
@@ -446,23 +449,6 @@ export default function ReviewPage({ id }: { id: string }) {
     }
   };
 
-  const doPush = async () => {
-    await flush();
-    setBusy('push');
-    setPushResult(null);
-    try {
-      const r = await api.push(id, onlyApproved);
-      setPushResult({ ok: r.ok, text: JSON.stringify(r.response, null, 2) });
-      if (r.ok) toast.success('سؤال‌ها به سایت ارسال شد.');
-      else toast.error('سایت درخواست را نپذیرفت.');
-    } catch (err) {
-      setPushResult({ ok: false, text: err instanceof Error ? err.message : String(err) });
-      toast.error(err);
-    } finally {
-      setBusy(null);
-    }
-  };
-
   // ------------------------------------------------------------------ render
   if (loadError && !project) {
     return (
@@ -600,11 +586,26 @@ export default function ReviewPage({ id }: { id: string }) {
                 hint: pushConfigured ? `${fa(exportCount)} سؤال` : 'پیکربندی نشده — از فایل Word استفاده کنید',
                 icon: 'send',
                 disabled: !pushConfigured,
-                onSelect: () => {
-                  setPushResult(null);
-                  setDialog({ kind: 'push' });
-                },
+                onSelect: () => setDialog({ kind: 'push' }),
                 testId: 'menu-push',
+              },
+              'sep',
+              {
+                label: 'طبقه‌بندی خودکار سؤال‌ها',
+                hint: 'درس، مبحث و مواد قانونی',
+                icon: 'sparkle',
+                onSelect: () => {
+                  void flush();
+                  setDialog({ kind: 'classify' });
+                },
+                testId: 'menu-classify',
+              },
+              {
+                label: 'آمار',
+                hint: 'پراکندگی درس‌ها، مباحث و مواد',
+                icon: 'list',
+                onSelect: () => setDialog({ kind: 'stats' }),
+                testId: 'menu-stats',
               },
               'sep',
               {
@@ -782,40 +783,28 @@ export default function ReviewPage({ id }: { id: string }) {
         </Modal>
       )}
       {dialog?.kind === 'push' && (
-        <Modal
-          title="ارسال مستقیم به سایت"
+        <PushDialog
+          projectId={id}
+          onlyApproved={onlyApproved}
+          setOnlyApproved={setOnlyApproved}
+          approvedCount={approvedCount}
+          total={total}
+          errorCount={counts.errors}
+          beforePush={flush}
           onClose={() => setDialog(null)}
-          footer={
-            <>
-              <button className="btn btn-primary" onClick={doPush} disabled={busy === 'push' || exportCount === 0}>
-                <Icon name="send" size={16} /> {busy === 'push' ? 'در حال ارسال…' : `ارسال ${fa(exportCount)} سؤال`}
-              </button>
-              <button className="btn" onClick={() => setDialog(null)}>
-                بستن
-              </button>
-            </>
-          }
-        >
-          <p className="muted small">روش پیشنهادی، دانلود فایل Word و بارگذاری آن در «ورود هوشمند از ورد» است.</p>
-          <label className="toggle">
-            <input type="checkbox" checked={onlyApproved} onChange={(e) => setOnlyApproved(e.target.checked)} />
-            <span>
-              فقط سؤال‌های تأییدشده ({fa(approvedCount)} از {fa(total)})
-            </span>
-          </label>
-          {!onlyApproved && counts.errors > 0 && (
-            <div className="alert alert-warning small">{fa(counts.errors)} سؤال هنوز خطا دارد.</div>
-          )}
-          {pushResult && (
-            <div className={cx('alert', pushResult.ok ? 'alert-success' : 'alert-danger')} data-testid="push-result">
-              <div>{pushResult.ok ? 'ارسال موفق بود. پاسخ سایت:' : 'ارسال ناموفق بود:'}</div>
-              <pre className="pre" dir="ltr">
-                {pushResult.text}
-              </pre>
-            </div>
-          )}
-        </Modal>
+        />
       )}
+      {dialog?.kind === 'classify' && (
+        <ClassifyDialog
+          project={project}
+          onClose={() => setDialog(null)}
+          onDone={(p) => {
+            setProject(p);
+            setVersion((v) => v + 1);
+          }}
+        />
+      )}
+      {dialog?.kind === 'stats' && <StatsDialog questions={questions} onClose={() => setDialog(null)} />}
     </div>
   );
 }

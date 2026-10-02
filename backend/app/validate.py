@@ -6,6 +6,7 @@ import re
 import statistics
 from collections import Counter
 
+from .classify import topics_by_subject
 from .models import Issue, Question
 from .normalize import normalize_text, to_ascii_digits, to_persian_digits
 
@@ -195,6 +196,17 @@ def validate_question(q: Question, has_explanations: bool) -> list[Issue]:
     issues.extend(_merged_suspects(q))
     if not q.subject_key:
         issues.append(_issue("warning", "missing_subject", "درس سؤال مشخص نیست."))
+    elif not q.topic and topics_by_subject().get(q.subject_key):
+        issues.append(_issue("warning", "missing_topic", "مبحث سؤال تشخیص داده نشد."))
+    unknown = sorted({r.law for r in q.articles if r.law and not r.law_key})
+    if unknown:
+        issues.append(
+            _issue(
+                "warning",
+                "article_unknown_law",
+                "قانون این ماده در فهرست قوانین شناخته نشد: " + "، ".join(unknown),
+            )
+        )
     return issues
 
 

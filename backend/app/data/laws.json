@@ -1,0 +1,223 @@
+{
+  "version": 1,
+  "_comment": "قوانین مرجع برای تشخیص «ماده/اصل» در متن سؤال‌ها. هر قانون: key (شناسه‌ی پایدار؛ تغییر ندهید)، name (نام نمایشی)، aliases (نام‌های دیگر و اختصارها؛ نقطه و فاصله در اختصار انعطاف‌پذیر است)، subject_key (درس پیش‌فرض، از app/blueprints.py)، kind (ماده یا اصل). برای افزودن قانون یک شیء جدید اضافه کنید؛ unverified یعنی نگاشت درس نیاز به بازبینی دارد.",
+  "laws": [
+    {
+      "key": "civil_code",
+      "name": "قانون مدنی",
+      "aliases": ["ق.م", "ق. م.", "قانون مدنی ایران"],
+      "subject_key": "civil",
+      "kind": "ماده"
+    },
+    {
+      "key": "commercial_code",
+      "name": "قانون تجارت",
+      "aliases": ["ق.ت", "ق. ت.", "قانون تجارت ۱۳۱۱", "قانون تجارت مصوب ۱۳۱۱"],
+      "subject_key": "commercial",
+      "kind": "ماده"
+    },
+    {
+      "key": "companies_bill_1347",
+      "name": "لایحه قانونی اصلاح قسمتی از قانون تجارت مصوب ۱۳۴۷",
+      "aliases": [
+        "لایحه قانونی اصلاح قسمتی از قانون تجارت",
+        "لایحه اصلاحی قسمتی از قانون تجارت",
+        "لایحه اصلاح قسمتی از قانون تجارت",
+        "لایحه اصلاحی قانون تجارت",
+        "لایحه قانونی اصلاح قانون تجارت",
+        "لایحه اصلاحی ۱۳۴۷",
+        "لایحه ۱۳۴۷",
+        "ل.ا.ق.ت",
+        "ل.ق.ا.ق.ت"
+      ],
+      "subject_key": "commercial",
+      "kind": "ماده"
+    },
+    {
+      "key": "civil_procedure_code",
+      "name": "قانون آیین دادرسی دادگاه‌های عمومی و انقلاب در امور مدنی",
+      "aliases": [
+        "قانون آیین دادرسی دادگاه‌های عمومی و انقلاب در امور مدنی",
+        "قانون آیین دادرسی مدنی",
+        "آیین دادرسی مدنی",
+        "ق.آ.د.م",
+        "ق.آ.د.م."
+      ],
+      "subject_key": "civil_procedure",
+      "kind": "ماده"
+    },
+    {
+      "key": "islamic_penal_code",
+      "name": "قانون مجازات اسلامی",
+      "aliases": ["قانون مجازات اسلامی ۱۳۹۲", "قانون مجازات اسلامی مصوب ۱۳۹۲", "ق.م.ا", "ق.م.ا."],
+      "subject_key": "criminal",
+      "kind": "ماده"
+    },
+    {
+      "key": "penal_code_tazirat_1375",
+      "name": "قانون مجازات اسلامی (کتاب پنجم - تعزیرات و مجازات‌های بازدارنده)",
+      "aliases": [
+        "کتاب پنجم قانون مجازات اسلامی",
+        "قانون تعزیرات",
+        "قانون مجازات اسلامی بخش تعزیرات",
+        "بخش تعزیرات قانون مجازات اسلامی",
+        "ق.ت.م.ا"
+      ],
+      "subject_key": "criminal",
+      "kind": "ماده"
+    },
+    {
+      "key": "aggravation_bribery_fraud",
+      "name": "قانون تشدید مجازات مرتکبین ارتشاء و اختلاس و کلاهبرداری",
+      "aliases": ["قانون تشدید مجازات مرتکبین ارتشا و اختلاس و کلاهبرداری", "قانون تشدید"],
+      "subject_key": "criminal",
+      "kind": "ماده"
+    },
+    {
+      "key": "criminal_procedure_code",
+      "name": "قانون آیین دادرسی کیفری",
+      "aliases": ["قانون آیین دادرسی کیفری ۱۳۹۲", "آیین دادرسی کیفری", "ق.آ.د.ک", "ق.آ.د.ک."],
+      "subject_key": "criminal_procedure",
+      "kind": "ماده"
+    },
+    {
+      "key": "constitution",
+      "name": "قانون اساسی",
+      "aliases": ["قانون اساسی جمهوری اسلامی ایران", "ق.ا"],
+      "subject_key": "constitutional",
+      "kind": "اصل"
+    },
+    {
+      "key": "registration_act",
+      "name": "قانون ثبت اسناد و املاک",
+      "aliases": ["قانون ثبت اسناد و املاک کشور", "قانون ثبت", "ق.ث"],
+      "subject_key": "registration_law",
+      "kind": "ماده"
+    },
+    {
+      "key": "notaries_act",
+      "name": "قانون دفاتر اسناد رسمی و کانون سردفتران و دفتریاران",
+      "aliases": ["قانون دفاتر اسناد رسمی"],
+      "subject_key": "registration_law",
+      "kind": "ماده"
+    },
+    {
+      "key": "non_contentious_affairs",
+      "name": "قانون امور حسبی",
+      "aliases": ["ق.ا.ح"],
+      "subject_key": "civil_procedure",
+      "kind": "ماده"
+    },
+    {
+      "key": "civil_judgments_enforcement",
+      "name": "قانون اجرای احکام مدنی",
+      "aliases": ["ق.ا.ا.م"],
+      "subject_key": "civil_procedure",
+      "kind": "ماده"
+    },
+    {
+      "key": "financial_convictions",
+      "name": "قانون نحوه اجرای محکومیت‌های مالی",
+      "aliases": ["قانون نحوه اجرای محکومیتهای مالی"],
+      "subject_key": "civil_procedure",
+      "kind": "ماده"
+    },
+    {
+      "key": "dispute_councils",
+      "name": "قانون شوراهای حل اختلاف",
+      "aliases": ["قانون شورای حل اختلاف"],
+      "subject_key": "civil_procedure",
+      "kind": "ماده"
+    },
+    {
+      "key": "administrative_court",
+      "name": "قانون تشکیلات و آیین دادرسی دیوان عدالت اداری",
+      "aliases": ["قانون دیوان عدالت اداری"],
+      "subject_key": "constitutional",
+      "kind": "ماده",
+      "unverified": true
+    },
+    {
+      "key": "cheque_act",
+      "name": "قانون صدور چک",
+      "aliases": ["قانون اصلاح قانون صدور چک"],
+      "subject_key": "commercial",
+      "kind": "ماده"
+    },
+    {
+      "key": "guild_system",
+      "name": "قانون نظام صنفی",
+      "aliases": ["قانون نظام صنفی کشور"],
+      "subject_key": "commercial",
+      "kind": "ماده"
+    },
+    {
+      "key": "insurance_act",
+      "name": "قانون بیمه",
+      "aliases": ["قانون بیمه ۱۳۱۶"],
+      "subject_key": "commercial",
+      "kind": "ماده"
+    },
+    {
+      "key": "securities_market",
+      "name": "قانون بازار اوراق بهادار جمهوری اسلامی ایران",
+      "aliases": ["قانون بازار اوراق بهادار"],
+      "subject_key": "commercial",
+      "kind": "ماده"
+    },
+    {
+      "key": "e_commerce",
+      "name": "قانون تجارت الکترونیکی",
+      "aliases": [],
+      "subject_key": "commercial",
+      "kind": "ماده"
+    },
+    {
+      "key": "family_protection_1391",
+      "name": "قانون حمایت خانواده",
+      "aliases": ["قانون حمایت خانواده ۱۳۹۱", "قانون حمایت خانواده مصوب ۱۳۹۱"],
+      "subject_key": "civil",
+      "kind": "ماده"
+    },
+    {
+      "key": "civil_liability",
+      "name": "قانون مسئولیت مدنی",
+      "aliases": ["قانون مسؤولیت مدنی"],
+      "subject_key": "civil",
+      "kind": "ماده"
+    },
+    {
+      "key": "apartment_ownership",
+      "name": "قانون تملک آپارتمان‌ها",
+      "aliases": ["قانون تملک آپارتمانها"],
+      "subject_key": "civil",
+      "kind": "ماده"
+    },
+    {
+      "key": "landlord_tenant_1356",
+      "name": "قانون روابط موجر و مستأجر ۱۳۵۶",
+      "aliases": ["قانون روابط موجر و مستاجر ۱۳۵۶", "قانون روابط موجر و مستأجر مصوب ۱۳۵۶"],
+      "subject_key": "civil",
+      "kind": "ماده"
+    },
+    {
+      "key": "landlord_tenant_1376",
+      "name": "قانون روابط موجر و مستأجر ۱۳۷۶",
+      "aliases": [
+        "قانون روابط موجر و مستاجر ۱۳۷۶",
+        "قانون روابط موجر و مستأجر مصوب ۱۳۷۶",
+        "قانون روابط موجر و مستأجر",
+        "قانون روابط موجر و مستاجر"
+      ],
+      "subject_key": "civil",
+      "kind": "ماده"
+    },
+    {
+      "key": "pre_sale_buildings",
+      "name": "قانون پیش‌فروش ساختمان",
+      "aliases": ["قانون پیش فروش ساختمان"],
+      "subject_key": "civil",
+      "kind": "ماده"
+    }
+  ]
+}

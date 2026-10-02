@@ -34,6 +34,17 @@ def _question_payload(q: Question) -> dict:
         "correct_key": q.correct_key,
         "explanation_html": _paragraphs(q.explanation),
         "source_ref": q.source_ref,
+        "topic": q.topic,
+        "articles": [
+            {
+                "law": a.law,
+                "law_key": a.law_key,
+                "kind": a.kind,
+                "number": a.number,
+                "clause": a.clause,
+            }
+            for a in q.articles
+        ],
     }
 
 

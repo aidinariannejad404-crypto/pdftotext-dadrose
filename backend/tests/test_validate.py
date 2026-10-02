@@ -14,6 +14,7 @@ def make_q(number: int = 1, **kw) -> Question:
         "correct_key": "1",
         "key_source": "table",
         "subject_key": "civil",
+        "topic": "قواعد عمومی قراردادها",
         "explanation": "گزینه ۱ صحیح است. بیع از عقود لازم است.",
     }
     defaults.update(kw)

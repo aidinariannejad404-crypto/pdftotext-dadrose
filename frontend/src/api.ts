@@ -1,5 +1,5 @@
 import type {
-  ClassifyEngine, DocKind, EngineName, Health, Meta, PageResult, PageText, PageTextUpdate, Project, ReviewMode, ProjectSummary, PushResult, Question, QuestionUpdate,
+  ClassifyEngine, DocKind, EngineName, Health, Meta, PageResult, PageText, PageTextUpdate, Project, ReviewMode, ProjectSummary, PushResult, Question, QuestionUpdate, SiteImportJob,
 } from './types';
 
 export class ApiError extends Error {
@@ -73,6 +73,8 @@ export const api = {
   classify: (id: string, engine: ClassifyEngine, numbers?: number[]) =>
     request<Project>('POST', `/api/projects/${enc(id)}/classify`, numbers ? { engine, numbers } : { engine }),
   setMode: (id: string, mode: ReviewMode) => request<Project>('POST', `/api/projects/${enc(id)}/mode`, { mode }),
+  siteCheck: () => request<{ ok: boolean }>('GET', '/api/site/check'),
+  importJob: (jobId: string | number) => request<SiteImportJob>('GET', `/api/site/import-jobs/${enc(String(jobId))}`),
   push: (id: string, onlyApproved: boolean) =>
     request<PushResult>('POST', `/api/projects/${enc(id)}/push`, { only_approved: onlyApproved }),
 };

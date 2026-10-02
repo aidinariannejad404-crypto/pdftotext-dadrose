@@ -18,6 +18,7 @@ from itertools import pairwise
 from typing import Literal
 
 from .blueprints import detect_subject_heading, get_blueprint, subject_for
+from .classify import classify_project
 from .models import (
     BBox,
     DocKind,
@@ -182,6 +183,16 @@ _PAGE_NUMBER = re.compile(r"^(\d{1,4}|[-–—(\[|]\s*\d{1,4}\s*[-–—)\]|]|\d
 
 
 _SECTION_HEADING = re.compile(r"^(بخش|فصل|مبحث|گفتار|قسمت|باب|درس|مقدمه)(\s+[^\s:]+){0,2}\s*:")
+
+
+_HEADING_LEVELS = {"بخش": 1, "فصل": 2, "مبحث": 3, "گفتار": 4}
+
+
+def _heading_level(t: _Tok) -> int:
+    """0 for a subject heading ("حقوق مدنی"), else by the structural word."""
+    if t.heading:
+        return 0
+    return _HEADING_LEVELS.get(t.text.split()[0] if t.text else "", 2)
 
 
 def _is_section_heading(text: str) -> bool:
@@ -480,6 +491,7 @@ class _Build:
     opt_sig: tuple[str, str] | None = None
     nopts: int = 0
     current: str = "stem"  # field receiving tokens ("stem", "option:N", "explanation")
+    path: list[str] = field(default_factory=list)  # headings above the question
     inline_key: str | None = None  # stated right after the options (test books)
 
 
@@ -488,6 +500,7 @@ class _BookletParser:
         self.toks = toks
         self.single = single
         self.subject: str | None = None
+        self.path: list[tuple[int, str]] = []  # (level, heading text)
         self.questions: list[_Build] = []
         self.cur: _Build | None = None
         self.q_style, self.o_sig = self._learn_styles()
@@ -526,6 +539,8 @@ class _BookletParser:
             t = toks[i]
             if t.heading is not None:
                 self.subject = t.heading or self.subject
+                level = _heading_level(t)
+                self.path = [(lv, h) for lv, h in self.path if lv < level] + [(level, t.text)]
                 i += 1
                 continue
             if t.first and self._inline_explanation_starts(i):
@@ -758,7 +773,7 @@ class _BookletParser:
             return
         if self._is_restart(m):
             self.questions.clear()
-        self.cur = _Build(number=m.value, subject=self.subject)
+        self.cur = _Build(number=m.value, subject=self.subject, path=[h for _, h in self.path])
         self.cur.marker_toks["stem"] = markers
         self.questions.append(self.cur)
 
@@ -1014,6 +1029,7 @@ def _to_question(b: _Build) -> Question:
         flags=flags,
         regions=_regions(all_toks, "booklet"),
     )
+    q.classification.section_path = list(b.path)
     if b.inline_key:
         q.correct_key, q.key_source = b.inline_key, "inline"
     _extract_source_ref(q)
@@ -1029,7 +1045,8 @@ def _tokenize(lines: list[Line], headings: bool) -> list[_Tok]:
         if headings and _marker_at(line_toks, 0) is None:
             subject = detect_subject_heading(line.text)
             if subject or _is_section_heading(line.text):
-                toks.append(_Tok("", line.words[0], line, first=True, heading=subject or ""))
+                text = normalize_text(line.text)
+                toks.append(_Tok(text, line.words[0], line, first=True, heading=subject or ""))
                 continue
         toks.extend(line_toks)
     return toks
@@ -1039,7 +1056,10 @@ def _tokenize(lines: list[Line], headings: bool) -> list[_Tok]:
 
 
 def build_questions(
-    booklet: DocumentResult, explanations: DocumentResult | None, blueprint: str
+    booklet: DocumentResult,
+    explanations: DocumentResult | None,
+    blueprint: str,
+    default_subject: str | None = None,
 ) -> ParseResult:
     lines = _content_lines(booklet)
     key_ids = _key_region(lines, len(booklet.pages))
@@ -1085,6 +1105,7 @@ def build_questions(
                 )
             )
 
+    classify_project(questions, blueprint=blueprint, default_subject=default_subject)
     for q in questions:
         q.issues = validate_question(q, has_expl)
     bp = get_blueprint(blueprint)

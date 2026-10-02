@@ -133,3 +133,18 @@ test('upload form, full-text type (desktop)', async ({ page }) => {
   await page.evaluate(() => document.fonts.ready);
   await page.locator('.upload-card').screenshot({ path: `${OUT}/upload-text-desktop.png` });
 });
+
+test('classification extras (desktop): article editor, group by article, stats', async ({ page }) => {
+  await reset(page);
+  await page.goto('/#/p/demo?q=3');
+  await page.getByTestId('current-number').waitFor();
+  await page.getByTestId('group-article').click();
+  await page.getByTestId('article-add').click();
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: `${OUT}/review-desktop-classification.png` });
+  await page.keyboard.press('Escape');
+  await page.getByTestId('more-menu').click();
+  await page.getByTestId('menu-stats').click();
+  await page.screenshot({ path: `${OUT}/review-desktop-stats.png` });
+});

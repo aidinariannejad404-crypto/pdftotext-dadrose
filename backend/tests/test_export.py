@@ -50,6 +50,8 @@ def test_payload_shape():
         "correct_key",
         "explanation_html",
         "source_ref",
+        "topic",
+        "articles",
     }
     assert q["source_ref"] == "ارشد سراسری-۸۸"
     assert q["stem_html"] == "<p>در عقد بیع &lt;شرط&gt; باطل کدام است؟</p>"
