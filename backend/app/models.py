@@ -160,3 +160,5 @@ class QuestionUpdate(BaseModel):
     correct_key: str | None = None
     explanation: str | None = None
     status: Literal["pending", "approved"] | None = None
+    # the remaining flags after the admin accepted a word or swapped in the alternative reading
+    flags: list[Flag] | None = None

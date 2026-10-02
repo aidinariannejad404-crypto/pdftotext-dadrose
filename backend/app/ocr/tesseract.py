@@ -14,7 +14,7 @@ from app.config import Settings
 from app.models import Line, Word
 
 LOW_CONF = 60.0
-_ARABIC_RE = re.compile(r"[؀-ۿ]")
+_ARABIC_RE = re.compile("[\u0600-\u06ff]")
 WATERMARK_RE = re.compile(
     r"cam\s*scanner|scanned\s+(with|by|using)|اسکن\s*شده\s*(با|توسط)|adobe\s*scan|"
     r"genius\s*scan|tiny\s*scanner|clear\s*scan|microsoft\s*lens|office\s*lens|"

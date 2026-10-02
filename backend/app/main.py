@@ -141,7 +141,12 @@ def health():
 
     engines = engine_status(settings)
     default = settings.default_ai_engine if engines.get(settings.default_ai_engine) else "offline"
-    return {"ok": True, "engines": engines, "default_engine": default}
+    return {
+        "ok": True,
+        "engines": engines,
+        "default_engine": default,
+        "push_configured": bool(settings.dadrose_api_url and settings.dadrose_api_token),
+    }
 
 
 @app.get("/api/meta")

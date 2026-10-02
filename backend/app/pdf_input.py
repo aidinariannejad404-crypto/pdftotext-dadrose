@@ -25,7 +25,7 @@ MIN_TEXT_CHARS = 20
 # A single image covering this share of the page means "scanned page".
 FULL_PAGE_IMAGE_RATIO = 0.8
 
-_ARABIC_RE = re.compile(r"[؀-ۿݐ-ݿ\ufb50-\ufdff\ufe70-\ufeff]")
+_ARABIC_RE = re.compile("[\u0600-\u06ff\u0750-\u077f\ufb50-\ufdff\ufe70-\ufeff]")
 _LATIN_RE = re.compile(r"[A-Za-z]")
 
 # PDFs store the *mirrored* glyph for brackets inside RTL runs, so "۱)" extracts as "۱(".
@@ -90,7 +90,7 @@ def fix_reversed(word: str) -> str:
 
 
 def _clean(text: str) -> str:
-    # NFKC folds Arabic presentation forms (\ufebb \ufeee \ufbfd ...) to the base letters.
+    # NFKC folds Arabic presentation forms (U+FB50–U+FEFF) to the base letters.
     text = unicodedata.normalize("NFKC", text)
     return text.replace("\u200f", "").replace("\u200e", "").strip()
 

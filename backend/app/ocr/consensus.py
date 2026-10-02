@@ -143,10 +143,10 @@ def merge(ai_text: str, tess_lines: list[Line], page: int) -> tuple[list[Line], 
                     )
             if same:
                 agreed += i2 - i1
-        elif tag == "insert":  # AI tokens with no Tesseract counterpart
+        elif tag == "delete":  # (a=AI, b=Tesseract) AI tokens with no Tesseract counterpart
             for k in range(i1, i2):
                 out_words[k] = Word(text=ai_flat[k], flag="disagree", alt="")
-        # "delete": Tesseract-only tokens; handled by the omitted-line check below.
+        # "insert": Tesseract-only tokens; handled by the omitted-line check below.
 
     # Assemble lines following the AI structure; estimate missing boxes from neighbours.
     result: list[Line] = []
